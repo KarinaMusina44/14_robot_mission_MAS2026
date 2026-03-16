@@ -6,9 +6,11 @@ class robotAgent(Agent):
 
     allowed_zones = {"z1"}
     next_zone_for_drop = None
+    robot_color = "unknown"
 
     def __init__(self, model):
         super().__init__(model)
+        self.type = self.__class__.robot_color
         self.allowed_zones = set(self.__class__.allowed_zones)
         self.knowledge = {
             "inventory": {"green": 0, "yellow": 0, "red": 0},
@@ -189,6 +191,7 @@ class greenAgent(robotAgent):
 
     allowed_zones = {"z1"}
     next_zone_for_drop = "z2"
+    robot_color = "green"
 
     @staticmethod
     def deliberate(knowledge):
@@ -216,6 +219,7 @@ class yellowAgent(robotAgent):
 
     allowed_zones = {"z1", "z2"}
     next_zone_for_drop = "z3"
+    robot_color = "yellow"
 
     @staticmethod
     def deliberate(knowledge):
@@ -242,6 +246,7 @@ class redAgent(robotAgent):
     """z1-z2-z3, pick red, carry east, and put away in disposal zone."""
 
     allowed_zones = {"z1", "z2", "z3"}
+    robot_color = "red"
 
     @staticmethod
     def deliberate(knowledge):
