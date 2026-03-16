@@ -1,10 +1,13 @@
+from __future__ import annotations
+
+import contextlib
 from typing import Any, Dict, List, Optional, Tuple
 
-from mesa import Model, Agent
+from mesa import Agent, Model
 from mesa.space import MultiGrid
 
-from objects import Radioactivity, WasteDisposalZone, Waste
-from agents import RobotAgent, GreenAgent, YellowAgent, RedAgent
+from agents import GreenAgent, RobotAgent, RedAgent, YellowAgent
+from objects import Radioactivity, Waste, WasteDisposalZone
 
 
 Position = Tuple[int, int]
@@ -15,8 +18,11 @@ class RobotMissionModel(Model):
         self,
         width: int,
         height: int,
-        n_waste: int = 0,
+        n_waste: int = 30,
         n_robots: int = 0,
+        n_green_robots: int = 3,
+        n_yellow_robots: int = 2,
+        n_red_robots: int = 1,
         seed: Optional[int] = None,
     ) -> None:
         super().__init__(seed=seed)
@@ -24,284 +30,289 @@ class RobotMissionModel(Model):
         self.height = height
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
 
-        # Environment agents
         self.radioactivity_agents: List[Radioactivity] = []
+        self.waste_agents: List[Waste] = []
+        self.robot_agents: List[RobotAgent] = []
         self.waste_disposal_zone: Optional[WasteDisposalZone] = None
         self.waste_disposal_pos: Optional[Position] = None
-        self.waste_agents: List[Waste] = []
+        self.disposed_counts: Dict[str, int] = {"green": 0, "yellow": 0, "red": 0}
 
-        # Robot agents
-        self.robot_agents: List[RobotAgent] = []
-
-        # Build the static environment
         self._init_radioactivity_field()
         self._init_waste_disposal_zone()
         self._init_waste(n_waste)
-
-        # Create robot agents
-        self._init_robots(n_robots)
+        self._init_robots(
+            n_robots=n_robots,
+            n_green_robots=n_green_robots,
+            n_yellow_robots=n_yellow_robots,
+            n_red_robots=n_red_robots,
+        )
 
     def _zone_for_x(self, x: int) -> str:
-        """Return 'z1', 'z2' or 'z3' according to the column index.
-
-        The environment is decomposed into three vertical bands from west to
-        east: z1 (low radioactivity), z2 (medium), z3 (high).
-        """
         third = self.width / 3.0
         if x < third:
             return "z1"
-        elif x < 2 * third:
+        if x < 2 * third:
             return "z2"
-        else:
-            return "z3"
+        return "z3"
 
     def _init_radioactivity_field(self) -> None:
-        """Create one :class:`Radioactivity` agent per grid cell."""
         for x in range(self.width):
             zone = self._zone_for_x(x)
             for y in range(self.height):
-                agent = Radioactivity(model=self, zone=zone)
-                self.grid.place_agent(agent, (x, y))
-                self.radioactivity_agents.append(agent)
+                obj = Radioactivity(model=self, zone=zone)
+                self.grid.place_agent(obj, (x, y))
+                self.radioactivity_agents.append(obj)
 
     def _init_waste_disposal_zone(self) -> None:
-        """Create a single waste-disposal cell on the eastern border."""
         x = self.width - 1
         y = int(self.rng.integers(0, self.height))
-        zone = self._zone_for_x(x)
-        agent = WasteDisposalZone(model=self, zone=zone)
-        self.grid.place_agent(agent, (x, y))
-        self.waste_disposal_zone = agent
+        obj = WasteDisposalZone(model=self, zone="disposal")
+        self.grid.place_agent(obj, (x, y))
+        self.waste_disposal_zone = obj
         self.waste_disposal_pos = (x, y)
 
     def _init_waste(self, n_waste: int) -> None:
-        """Create a number of waste objects at random positions."""
-        # types = ("green", "yellow", "red")
-        types = ("green",)
-        for _ in range(n_waste):
-            x = int(self.rng.integers(0, self.width // 3))
+        # Step 1 starts with initial green waste in z1.
+        for _ in range(max(0, n_waste)):
+            x = int(self.rng.integers(0, max(1, self.width // 3)))
             y = int(self.rng.integers(0, self.height))
-            waste_type = self.random.choice(types)
-            agent = Waste(model=self, waste_type=waste_type)
-            self.grid.place_agent(agent, (x, y))
-            self.waste_agents.append(agent)
+            obj = Waste(model=self, waste_type="green")
+            self.grid.place_agent(obj, (x, y))
+            self.waste_agents.append(obj)
 
-    def _init_robots(self, n_robots: int) -> None:
-        """Create a number of robot agents at random positions."""
-        types = ("green", "yellow", "red")
-        for _ in range(n_robots):
-            x = int(self.rng.integers(0, self.width // 3))
-            y = int(self.rng.integers(0, self.height))
-            robot_type = self.random.choice(types)
+    def _init_robots(
+        self,
+        n_robots: int,
+        n_green_robots: int,
+        n_yellow_robots: int,
+        n_red_robots: int,
+    ) -> None:
+        if n_robots > 0 and (n_green_robots + n_yellow_robots + n_red_robots) == 0:
+            for _ in range(n_robots):
+                robot_cls = self.random.choice([GreenAgent, YellowAgent, RedAgent])
+                self._spawn_one_robot(robot_cls)
+            return
 
-            if robot_type == "green":
-                agent = GreenAgent(model=self)
-            elif robot_type == "yellow":
-                agent = YellowAgent(model=self)
-            else:
-                agent = RedAgent(model=self)
+        for _ in range(max(0, n_green_robots)):
+            self._spawn_one_robot(GreenAgent)
+        for _ in range(max(0, n_yellow_robots)):
+            self._spawn_one_robot(YellowAgent)
+        for _ in range(max(0, n_red_robots)):
+            self._spawn_one_robot(RedAgent)
 
-            self.grid.place_agent(agent, (x, y))
-            self.robot_agents.append(agent)
+    def _spawn_one_robot(self, robot_cls: type[RobotAgent]) -> None:
+        robot = robot_cls(model=self)
+        pos = self._random_position_in_zones(robot.allowed_zones)
+        self.grid.place_agent(robot, pos)
+        self.robot_agents.append(robot)
+
+    def _random_position_in_zones(self, zones: set[str]) -> Position:
+        candidates: List[Position] = []
+        for x in range(self.width):
+            if self._zone_for_x(x) not in zones:
+                continue
+            for y in range(self.height):
+                candidates.append((x, y))
+        return self.random.choice(candidates) if candidates else (0, 0)
 
     def step(self) -> None:
-        self.agents.shuffle_do("step")
+        robots = list(self.robot_agents)
+        self.random.shuffle(robots)
+        for robot in robots:
+            robot.step()
 
-    def do(self, agent: RobotAgent, action: Any) -> Dict[Position, List[Any]]:
-        """Execute an action in the environment and return percepts.
-
-        Parameters
-        ----------
-        agent:
-            The agent that intends to perform the action.
-        action:
-            A domain-specific description of the action. The first element
-            (for a tuple/list) or the ``type``/``name`` attribute is used
-            as the action type.
-
-        Returns
-        -------
-        dict
-            A mapping from positions to the list of objects present on each
-            observable cell *after* executing the action (or, if the action
-            was infeasible, without changing the state).
-        """
-
+    def do(self, agent: RobotAgent, action: Any) -> Dict[str, Any]:
         action_type = self._get_action_type(action)
-        if action_type is None:
-            raise ValueError(f"Cannot determine action type from {action!r}")
+        inventory = self._get_inventory(agent)
+        action_success = False
 
         if action_type == "move":
-            target = self._get_move_target(agent, action)
-            if self._is_move_feasible(agent, target):
-                # self.grid.move_agent(agent, target)
-                agent.apply_action({"type": "move", "to": target})
+            target = self._get_move_target(action)
+            if target is not None and self._is_move_feasible(agent, target):
+                self.grid.move_agent(agent, target)
+                action_success = True
 
-        elif action_type == "pick":
-            if self._is_pick_feasible(agent):
-                    # contents = self.grid.get_cell_list_contents([agent.pos])
-                    # for obj in contents:
-                    #     if getattr(obj, "waste_type", None) == agent.robot_type:
-                    #         self.grid.remove_agent(obj)
-                    #         self.waste_agents.remove(obj)
-                    #         agent.knowledge['inventory'][agent.robot_type] += 1
-                    #         break
-                agent.apply_action({"type": "pickup"})
+        elif action_type == "move_random":
+            moves = self._allowed_moves_for(agent)
+            if moves:
+                self.grid.move_agent(agent, self.random.choice(moves))
+                action_success = True
 
-        elif action_type == "drop":
-            if self._is_drop_feasible(agent):
-                agent.apply_action({"type": "drop"})
+        elif action_type == "move_east":
+            east_moves = self._east_moves_for(agent)
+            if east_moves:
+                self.grid.move_agent(agent, self.random.choice(east_moves))
+                action_success = True
+            else:
+                fallback_moves = self._allowed_moves_for(agent)
+                if fallback_moves:
+                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
+                    action_success = True
+
+        elif action_type == "pickup":
+            waste_type = self._action_get(action, "waste")
+            if waste_type in {"green", "yellow", "red"} and self.remove_one_waste_at(
+                agent.pos, waste_type
+            ):
+                inventory[waste_type] += 1
+                action_success = True
 
         elif action_type == "transform":
-            if self._is_transform_feasible(agent):
-                agent.apply_action({"type": "transform"})
-        else:
-            pass
+            src = self._action_get(action, "from")
+            dst = self._action_get(action, "to")
+            count = int(self._action_get(action, "count", 0) or 0)
+            if src in inventory and dst in inventory and count > 0 and inventory[src] >= count:
+                inventory[src] -= count
+                inventory[dst] += 1
+                action_success = True
 
-        return self._build_percepts(agent)
+        elif action_type == "drop":
+            waste_type = self._action_get(action, "waste")
+            if (
+                waste_type in inventory
+                and inventory[waste_type] > 0
+                and self._is_drop_feasible(agent)
+            ):
+                inventory[waste_type] -= 1
+                self.add_one_waste_at(agent.pos, waste_type)
+                action_success = True
+
+        elif action_type == "put_away":
+            waste_type = self._action_get(action, "waste")
+            if (
+                waste_type in inventory
+                and inventory[waste_type] > 0
+                and self._is_disposal_cell(agent.pos)
+            ):
+                inventory[waste_type] -= 1
+                self.disposed_counts[waste_type] += 1
+                action_success = True
+
+        elif action_type == "wait":
+            action_success = True
+
+        return self._build_percepts(agent, action_success)
+
+    @staticmethod
+    def _action_get(action: Any, key: str, default: Any = None) -> Any:
+        if isinstance(action, dict):
+            return action.get(key, default)
+        return getattr(action, key, default)
 
     @staticmethod
     def _get_action_type(action: Any) -> Optional[str]:
-        """Extract an action type identifier from an action description.
-
-        Supported conventions:
-        - an object with a ``type`` attribute
-        - an object with a ``name`` attribute
-        - a tuple/list whose first element is the action type
-        - a plain string
-        """
-
-        # Try attribute-based descriptions first
+        if isinstance(action, dict):
+            action_type = action.get("type")
+            return str(action_type) if action_type is not None else None
         if hasattr(action, "type"):
-            return getattr(action, "type")  # type: ignore[no-any-return]
+            return str(getattr(action, "type"))
         if hasattr(action, "name"):
-            return getattr(action, "name")  # type: ignore[no-any-return]
-
-        # first element of a sequence, e.g. ("move", (x, y))
+            return str(getattr(action, "name"))
         if isinstance(action, (tuple, list)) and action:
             return str(action[0])
-
         if isinstance(action, str):
             return action
-
         return None
 
-    def _get_move_target(self, agent: Agent, action: Any) -> Position:
-        """Extract the target position from a MOVE action.
-
-        Supported encodings:
-        - ("move", (x, y))
-        - {"type": "move", "to": (x, y)}
-        """
-
-        if isinstance(action, (tuple, list)) and len(action) >= 2:
-            return tuple(action[1])  # type: ignore[return-value]
+    def _get_move_target(self, action: Any) -> Optional[Position]:
         if isinstance(action, dict) and "to" in action:
             return tuple(action["to"])  # type: ignore[return-value]
+        if isinstance(action, (tuple, list)) and len(action) >= 2:
+            return tuple(action[1])  # type: ignore[return-value]
+        return None
 
-        possible_steps = self.grid.get_neighborhood(
-            agent.pos,
-            moore=True,
-            include_center=False,
-        )
-        return self.random.choice(possible_steps)
+    def _allowed_moves_for(self, agent: RobotAgent) -> List[Position]:
+        neighbors = self.grid.get_neighborhood(agent.pos, moore=False, include_center=False)
+        return [p for p in neighbors if self._zone_for_x(p[0]) in agent.allowed_zones]
 
-    def _is_move_feasible(self, agent: Agent, target: Position) -> bool:
-        """Check whether a MOVE action is feasible for the given agent.
+    def _east_moves_for(self, agent: RobotAgent) -> List[Position]:
+        return [p for p in self._allowed_moves_for(agent) if p[0] > agent.pos[0]]
 
-        The MOVE action is feasible if:
-        - the target position is a neighbouring cell, and
-        - the target zone is accessible for the robot type:
-          * green robots    -> only in z1
-          * yellow robots   -> in z1 and z2
-          * red robots      -> in z1, z2 and z3
-        The robot type is expected to be available as ``agent.robot_type``
-        with value in {"green", "yellow", "red"}.
-        """
-
-        # 1) Neighbourhood constraint
-        neighbourhood = self.grid.get_neighborhood(
-            agent.pos, moore=True, include_center=False
-        )
-        if target not in neighbourhood:
-            return False
-
-        # 2) Zone-access constraint according to robot type
-        zone = self._zone_for_x(target[0])
-        robot_type = getattr(agent, "robot_type", None)
-
-        if robot_type == "green":
-            return zone == "z1"
-        if robot_type == "yellow":
-            return zone in {"z1", "z2"}
-        if robot_type == "red":
-            return zone in {"z1", "z2", "z3"}
-
-        return False
-
-    def _is_pick_feasible(self, agent: RobotAgent) -> bool:
-        """Check whether a PICK action is feasible for the given agent.
-
-        The PICK action is feasible if there is at least one waste object of the same color on
-        the same cell as the agent.
-        """
-
-        contents = self.grid.get_cell_list_contents([agent.pos])
-        for obj in contents:
-            if getattr(obj, "waste_type", None) is not None:
-                return obj.waste_type == agent.type
-        return False
-
-    def _is_transform_feasible(self, agent: RobotAgent) -> bool:
-        """Check whether a TRANSFORM action is feasible for the given agent.
-
-        The TRANSFORM action is feasible if the agent has two item of the same color in its inventory.
-        """
-
-        inventory = agent.knowledge.get("inventory", {})
-        return inventory.get(agent.type, 0) >= 2
+    def _is_move_feasible(self, agent: RobotAgent, target: Position) -> bool:
+        return target in self._allowed_moves_for(agent)
 
     def _is_drop_feasible(self, agent: RobotAgent) -> bool:
-        """Check whether a DROP action is feasible for the given agent.
-
-        The DROP action is feasible if:
-        - the agent is on the waste-disposal cell
-        - and the agent has at least one red waste item in its inventory.
-        - or the agent is on the frontier cell to the next zone, and it has one waste item of the same color as the next zone in its inventory
-        - and the agent cannt move east
-        """
-
-        if self.waste_disposal_pos is None:
+        target_zone = getattr(agent, "next_zone_for_drop", None)
+        if not isinstance(target_zone, str):
             return False
+        for p in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False):
+            if p[0] > agent.pos[0] and self._zone_for_x(p[0]) == target_zone:
+                return True
+        return False
 
-        if agent.knowledge["inventory"]["red"] > 0 and agent.pos != self.waste_disposal_pos:
+    def _is_disposal_cell(self, pos: Position) -> bool:
+        if self.waste_disposal_pos is not None and pos == self.waste_disposal_pos:
+            return True
+        return any(isinstance(obj, WasteDisposalZone) for obj in self.grid.get_cell_list_contents([pos]))
+
+    def _get_inventory(self, agent: RobotAgent) -> Dict[str, int]:
+        knowledge = getattr(agent, "knowledge", {})
+        inventory = knowledge.get("inventory")
+        if not isinstance(inventory, dict):
+            knowledge["inventory"] = {"green": 0, "yellow": 0, "red": 0}
+            inventory = knowledge["inventory"]
+        for k in ("green", "yellow", "red"):
+            inventory.setdefault(k, 0)
+        return inventory
+
+    def add_one_waste_at(self, pos: Position, waste_type: str) -> bool:
+        if waste_type not in {"green", "yellow", "red"}:
             return False
+        obj = Waste(model=self, waste_type=waste_type)
+        self.grid.place_agent(obj, pos)
+        self.waste_agents.append(obj)
+        return True
 
-        inventory = agent.knowledge.get("inventory", {})
-        if agent.type == "green":
-            next_zone = "z2"
-            next_zone_type = "yellow"
-        elif agent.type == "yellow":
-            next_zone = "z3"
-            next_zone_type = "red"
+    def remove_one_waste_at(self, pos: Position, waste_type: str) -> bool:
+        for obj in self.grid.get_cell_list_contents([pos]):
+            if isinstance(obj, Waste) and obj.waste_type == waste_type:
+                self.grid.remove_agent(obj)
+                with contextlib.suppress(ValueError):
+                    self.waste_agents.remove(obj)
+                with contextlib.suppress(Exception):
+                    obj.remove()
+                return True
+        return False
 
-        return self._zone_for_x(agent.pos[0]) == next_zone and inventory.get(next_zone_type, 0) > 0
+    def _cell_wastes(self, pos: Position) -> Dict[str, int]:
+        counts = {"green": 0, "yellow": 0, "red": 0}
+        for obj in self.grid.get_cell_list_contents([pos]):
+            waste_type = getattr(obj, "waste_type", None)
+            if waste_type in counts:
+                counts[waste_type] += 1
+        return counts
 
-
-    def _build_percepts(self, agent: Agent) -> Dict[Position, List[Any]]:
-        """Return what the agent can perceive after an action.
-
-        For simplicity, we return the contents of the current cell and its
-        neighbouring cells as a dictionary:
-
-        ``{ position: [objects in that cell], ... }``
-        """
-
-        percepts: Dict[Position, List[Any]] = {}
-        cells = self.grid.get_neighborhood(
-            agent.pos, moore=True, include_center=True
-        )
+    def _adjacent_tiles_percepts(self, agent: RobotAgent) -> Dict[Position, Dict[str, Any]]:
+        data: Dict[Position, Dict[str, Any]] = {}
+        cells = self.grid.get_neighborhood(agent.pos, moore=True, include_center=True)
         for pos in cells:
             contents = self.grid.get_cell_list_contents([pos])
-            percepts[pos] = list(contents)
-        return percepts
+            data[pos] = {
+                "zone": self._zone_for_x(pos[0]),
+                "is_disposal_zone": self._is_disposal_cell(pos),
+                "wastes": self._cell_wastes(pos),
+                "contents": [obj.__class__.__name__ for obj in contents],
+            }
+        return data
+
+    def _build_percepts(self, agent: RobotAgent, action_success: bool) -> Dict[str, Any]:
+        next_zone = getattr(agent, "next_zone_for_drop", None)
+        frontier_to_next_zone = False
+        if isinstance(next_zone, str):
+            for pos in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False):
+                if pos[0] > agent.pos[0] and self._zone_for_x(pos[0]) == next_zone:
+                    frontier_to_next_zone = True
+                    break
+
+        return {
+            "position": tuple(agent.pos),
+            "zone": self._zone_for_x(agent.pos[0]),
+            "cell_wastes": self._cell_wastes(agent.pos),
+            "allowed_moves": self._allowed_moves_for(agent),
+            "in_disposal_zone": self._is_disposal_cell(agent.pos),
+            "frontier_to_next_zone": frontier_to_next_zone,
+            "inventory": dict(self._get_inventory(agent)),
+            "adjacent_tiles": self._adjacent_tiles_percepts(agent),
+            "action_success": action_success,
+            "disposed_counts": dict(self.disposed_counts),
+        }

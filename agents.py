@@ -164,8 +164,12 @@ class RobotAgent(Agent):
         self.knowledge["last_percepts"] = percepts
         if action is not None:
             self.knowledge["last_action"] = action
+        if isinstance(percepts, dict) and isinstance(percepts.get("inventory"), dict):
+            self.knowledge["inventory"].update(percepts["inventory"])
         if isinstance(model_percepts, dict):
             self.knowledge["model_percepts"] = model_percepts
+            if isinstance(model_percepts.get("inventory"), dict):
+                self.knowledge["inventory"].update(model_percepts["inventory"])
         self.knowledge["history"].append(
             {
                 "percepts": percepts,

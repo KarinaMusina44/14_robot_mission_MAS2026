@@ -18,6 +18,7 @@ def _build_model_kwargs(args: argparse.Namespace, model_cls: type) -> Dict[str, 
     candidate_kwargs = {
         "width": args.width,
         "height": args.height,
+        "n_robots": args.n_robots,
         "n_green_robots": args.n_green_robots,
         "n_yellow_robots": args.n_yellow_robots,
         "n_red_robots": args.n_red_robots,
@@ -78,12 +79,22 @@ def _count_wastes(model: Any) -> Dict[str, int]:
 
 def _count_robots(model: Any) -> Dict[str, int]:
     """Count robot objects by class name."""
-    counts = {"greenAgent": 0, "yellowAgent": 0, "redAgent": 0}
+    counts = {
+        "GreenAgent": 0,
+        "YellowAgent": 0,
+        "RedAgent": 0,
+        "greenAgent": 0,
+        "yellowAgent": 0,
+        "redAgent": 0,
+    }
     for obj in _iter_grid_objects(model) or []:
         name = obj.__class__.__name__
         if name in counts:
             counts[name] += 1
-    return counts
+    g = counts["GreenAgent"] + counts["greenAgent"]
+    y = counts["YellowAgent"] + counts["yellowAgent"]
+    r = counts["RedAgent"] + counts["redAgent"]
+    return {"green": g, "yellow": y, "red": r}
 
 
 def _preflight_checks(model: Any) -> Tuple[List[str], List[str]]:
@@ -116,7 +127,7 @@ def _print_counts(step: int, model: Any) -> None:
     robots = _count_robots(model)
     print(
         f"step={step} "
-        f"robots(g={robots['greenAgent']},y={robots['yellowAgent']},r={robots['redAgent']}) "
+        f"robots(g={robots['green']},y={robots['yellow']},r={robots['red']}) "
         f"wastes(g={wastes['green']},y={wastes['yellow']},r={wastes['red']})"
     )
 
@@ -126,6 +137,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=100, help="Number of simulation steps.")
     parser.add_argument("--width", type=int, default=20, help="Grid width (if model supports it).")
     parser.add_argument("--height", type=int, default=10, help="Grid height (if model supports it).")
+    parser.add_argument("--n-robots", type=int, dest="n_robots", help="Total robot count (optional).")
     parser.add_argument("--n-green-robots", type=int, dest="n_green_robots", help="Green robot count.")
     parser.add_argument("--n-yellow-robots", type=int, dest="n_yellow_robots", help="Yellow robot count.")
     parser.add_argument("--n-red-robots", type=int, dest="n_red_robots", help="Red robot count.")
