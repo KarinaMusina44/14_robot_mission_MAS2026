@@ -1,7 +1,7 @@
 from mesa import Agent
 
 
-class robotAgent(Agent):
+class RobotAgent(Agent):
     """Simple shared base class for the three robots."""
 
     allowed_zones = {"z1"}
@@ -186,7 +186,7 @@ class robotAgent(Agent):
         self.update_knowledge(new_percepts, action=action, model_percepts=model_percepts)
 
 
-class greenAgent(robotAgent):
+class GreenAgent(RobotAgent):
     """z1 only, pick green, transform 2 green -> 1 yellow, then carry east."""
 
     allowed_zones = {"z1"}
@@ -214,7 +214,7 @@ class greenAgent(robotAgent):
         return {"type": "wait"}
 
 
-class yellowAgent(robotAgent):
+class YellowAgent(RobotAgent):
     """z1-z2, pick yellow, transform 2 yellow -> 1 red, then carry east."""
 
     allowed_zones = {"z1", "z2"}
@@ -242,7 +242,7 @@ class yellowAgent(robotAgent):
         return {"type": "wait"}
 
 
-class redAgent(robotAgent):
+class RedAgent(RobotAgent):
     """z1-z2-z3, pick red, carry east, and put away in disposal zone."""
 
     allowed_zones = {"z1", "z2", "z3"}

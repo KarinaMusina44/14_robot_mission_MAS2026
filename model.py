@@ -4,6 +4,7 @@ from mesa import Model, Agent
 from mesa.space import MultiGrid
 
 from objects import Radioactivity, WasteDisposalZone, Waste
+from agents import RobotAgent, GreenAgent, YellowAgent, RedAgent
 
 
 Position = Tuple[int, int]
@@ -15,6 +16,7 @@ class RobotMissionModel(Model):
         width: int,
         height: int,
         n_waste: int = 0,
+        n_robots: int = 0,
         seed: Optional[int] = None,
     ) -> None:
         super().__init__(seed=seed)
@@ -28,10 +30,16 @@ class RobotMissionModel(Model):
         self.waste_disposal_pos: Optional[Position] = None
         self.waste_agents: List[Waste] = []
 
+        # Robot agents
+        self.robot_agents: List[RobotAgent] = []
+
         # Build the static environment
         self._init_radioactivity_field()
         self._init_waste_disposal_zone()
         self._init_waste(n_waste)
+
+        # Create robot agents
+        self._init_robots(n_robots)
 
     def _zone_for_x(self, x: int) -> str:
         """Return 'z1', 'z2' or 'z3' according to the column index.
@@ -78,10 +86,28 @@ class RobotMissionModel(Model):
             self.grid.place_agent(agent, (x, y))
             self.waste_agents.append(agent)
 
+    def _init_robots(self, n_robots: int) -> None:
+        """Create a number of robot agents at random positions."""
+        types = ("green", "yellow", "red")
+        for _ in range(n_robots):
+            x = int(self.rng.integers(0, self.width // 3))
+            y = int(self.rng.integers(0, self.height))
+            robot_type = self.random.choice(types)
+
+            if robot_type == "green":
+                agent = GreenAgent(model=self)
+            elif robot_type == "yellow":
+                agent = YellowAgent(model=self)
+            else:
+                agent = RedAgent(model=self)
+
+            self.grid.place_agent(agent, (x, y))
+            self.robot_agents.append(agent)
+
     def step(self) -> None:
         self.agents.shuffle_do("step")
 
-    def do(self, agent: Any, action: Any) -> Dict[Position, List[Any]]:
+    def do(self, agent: RobotAgent, action: Any) -> Dict[Position, List[Any]]:
         """Execute an action in the environment and return percepts.
 
         Parameters
@@ -108,7 +134,27 @@ class RobotMissionModel(Model):
         if action_type == "move":
             target = self._get_move_target(agent, action)
             if self._is_move_feasible(agent, target):
-                self.grid.move_agent(agent, target)
+                # self.grid.move_agent(agent, target)
+                agent.apply_action({"type": "move", "to": target})
+
+        elif action_type == "pick":
+            if self._is_pick_feasible(agent):
+                    # contents = self.grid.get_cell_list_contents([agent.pos])
+                    # for obj in contents:
+                    #     if getattr(obj, "waste_type", None) == agent.robot_type:
+                    #         self.grid.remove_agent(obj)
+                    #         self.waste_agents.remove(obj)
+                    #         agent.knowledge['inventory'][agent.robot_type] += 1
+                    #         break
+                agent.apply_action({"type": "pickup"})
+
+        elif action_type == "drop":
+            if self._is_drop_feasible(agent):
+                agent.apply_action({"type": "drop"})
+
+        elif action_type == "transform":
+            if self._is_transform_feasible(agent):
+                agent.apply_action({"type": "transform"})
         else:
             pass
 
@@ -192,6 +238,55 @@ class RobotMissionModel(Model):
             return zone in {"z1", "z2", "z3"}
 
         return False
+
+    def _is_pick_feasible(self, agent: RobotAgent) -> bool:
+        """Check whether a PICK action is feasible for the given agent.
+
+        The PICK action is feasible if there is at least one waste object of the same color on
+        the same cell as the agent.
+        """
+
+        contents = self.grid.get_cell_list_contents([agent.pos])
+        for obj in contents:
+            if getattr(obj, "waste_type", None) is not None:
+                return obj.waste_type == agent.type
+        return False
+
+    def _is_transform_feasible(self, agent: RobotAgent) -> bool:
+        """Check whether a TRANSFORM action is feasible for the given agent.
+
+        The TRANSFORM action is feasible if the agent has two item of the same color in its inventory.
+        """
+
+        inventory = agent.knowledge.get("inventory", {})
+        return inventory.get(agent.type, 0) >= 2
+
+    def _is_drop_feasible(self, agent: RobotAgent) -> bool:
+        """Check whether a DROP action is feasible for the given agent.
+
+        The DROP action is feasible if:
+        - the agent is on the waste-disposal cell
+        - and the agent has at least one red waste item in its inventory.
+        - or the agent is on the frontier cell to the next zone, and it has one waste item of the same color as the next zone in its inventory
+        - and the agent cannt move east
+        """
+
+        if self.waste_disposal_pos is None:
+            return False
+
+        if agent.knowledge["inventory"]["red"] > 0 and agent.pos != self.waste_disposal_pos:
+            return False
+
+        inventory = agent.knowledge.get("inventory", {})
+        if agent.type == "green":
+            next_zone = "z2"
+            next_zone_type = "yellow"
+        elif agent.type == "yellow":
+            next_zone = "z3"
+            next_zone_type = "red"
+
+        return self._zone_for_x(agent.pos[0]) == next_zone and inventory.get(next_zone_type, 0) > 0
+
 
     def _build_percepts(self, agent: Agent) -> Dict[Position, List[Any]]:
         """Return what the agent can perceive after an action.
