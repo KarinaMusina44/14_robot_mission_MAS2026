@@ -9,9 +9,11 @@ from typing import Any, Dict, Iterable, List, Tuple
 
 def _build_model_kwargs(args: argparse.Namespace, model_cls: type) -> Dict[str, Any]:
     """Build kwargs compatible with RobotMission signature."""
-    n_waste = args.n_waste
-    if n_waste is None:
-        n_waste = args.n_green_wastes
+    requested_waste = args.n_waste
+    if requested_waste is None:
+        requested_waste = args.n_green_wastes
+    if requested_waste is None:
+        requested_waste = 30
 
     candidate_kwargs = {
         "width": args.width,
@@ -19,8 +21,8 @@ def _build_model_kwargs(args: argparse.Namespace, model_cls: type) -> Dict[str, 
         "n_green_robots": args.n_green_robots,
         "n_yellow_robots": args.n_yellow_robots,
         "n_red_robots": args.n_red_robots,
-        "n_green_wastes": args.n_green_wastes,
-        "n_waste": n_waste,
+        "n_green_wastes": requested_waste,
+        "n_waste": requested_waste,
         "seed": args.seed,
         "verbose": args.verbose,
     }
@@ -128,7 +130,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-yellow-robots", type=int, dest="n_yellow_robots", help="Yellow robot count.")
     parser.add_argument("--n-red-robots", type=int, dest="n_red_robots", help="Red robot count.")
     parser.add_argument("--n-green-wastes", type=int, dest="n_green_wastes", help="Initial green waste count.")
-    parser.add_argument("--n-waste", type=int, dest="n_waste", help="Initial waste count (generic).")
+    parser.add_argument(
+        "--n-waste",
+        type=int,
+        dest="n_waste",
+        default=30,
+        help="Initial waste count (generic, default: 30).",
+    )
     parser.add_argument("--seed", type=int, help="Random seed.")
     parser.add_argument("--verbose", action="store_true", help="Print counts during simulation.")
     parser.add_argument(

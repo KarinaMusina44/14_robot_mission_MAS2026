@@ -69,7 +69,7 @@ class RobotMissionModel(Model):
     def _init_waste(self, n_waste: int) -> None:
         """Create a number of waste objects at random positions."""
         # types = ("green", "yellow", "red")
-        types = ("green")
+        types = ("green",)
         for _ in range(n_waste):
             x = int(self.rng.integers(0, self.width // 3))
             y = int(self.rng.integers(0, self.height))
