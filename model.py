@@ -1,3 +1,9 @@
+"""
+Group: 14
+Date: 16 March 2026
+Members: Deodato V. Bastos Neto, Karina Musina
+"""
+
 from __future__ import annotations
 
 import contextlib

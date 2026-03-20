@@ -1,3 +1,9 @@
+"""
+Group: 14
+Date: 16 March 2026
+Members: Deodato V. Bastos Neto, Karina Musina
+"""
+
 import random
 
 from mesa import Agent

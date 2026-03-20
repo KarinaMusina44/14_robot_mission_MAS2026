@@ -1,3 +1,9 @@
+"""
+Group: 14
+Date: 16 March 2026
+Members: Deodato V. Bastos Neto, Karina Musina
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -193,7 +199,6 @@ def main() -> int:
     try:
         import model as model_module
     except Exception as exc:  # pragma: no cover
-        print("Could not import model.py.")
         print(f"Import error: {exc}")
         if args.debug_traceback:
             traceback.print_exc()

@@ -1,5 +1,10 @@
-from mesa import Agent
+"""
+Group: 14
+Date: 16 March 2026
+Members: Deodato V. Bastos Neto, Karina Musina
+"""
 
+from mesa import Agent
 
 class RobotAgent(Agent):
     """Simple shared base class for the three robots."""
@@ -202,17 +207,27 @@ class GreenAgent(RobotAgent):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
 
+        # 1. Check if we can transform
         if inv["green"] >= 2:
             return {"type": "transform", "from": "green", "to": "yellow", "count": 2}
 
+        # 2. Check if we have yellow waste to move/drop
         if inv["yellow"] >= 1:
             if p["frontier_to_next_zone"]:
                 return {"type": "drop", "waste": "yellow"}
             return {"type": "move_east"}
 
+        # 3. Check if there is green waste on the CURRENT tile
         if p["cell_wastes"]["green"] > 0:
             return {"type": "pickup", "waste": "green"}
 
+        # 4. SMART PATHFINDING: Look for green waste in ADJACENT tiles
+        if "adjacent_tiles" in p:
+            for pos, tile_info in p["adjacent_tiles"].items():
+                if pos in p["allowed_moves"] and tile_info["wastes"]["green"] > 0:
+                    return {"type": "move", "to": pos}
+
+        # 5. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return {"type": "move_random"}
         return {"type": "wait"}
@@ -230,17 +245,27 @@ class YellowAgent(RobotAgent):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
 
+        # 1. Check if we can transform
         if inv["yellow"] >= 2:
             return {"type": "transform", "from": "yellow", "to": "red", "count": 2}
 
+        # 2. Check if we have red waste to move/drop
         if inv["red"] >= 1:
             if p["frontier_to_next_zone"]:
                 return {"type": "drop", "waste": "red"}
             return {"type": "move_east"}
 
+        # 3. Check if there is yellow waste on the CURRENT tile
         if p["cell_wastes"]["yellow"] > 0:
             return {"type": "pickup", "waste": "yellow"}
 
+        # 4. SMART PATHFINDING: Look for yellow waste in ADJACENT tiles
+        if "adjacent_tiles" in p:
+            for pos, tile_info in p["adjacent_tiles"].items():
+                if pos in p["allowed_moves"] and tile_info["wastes"]["yellow"] > 0:
+                    return {"type": "move", "to": pos}
+
+        # 5. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return {"type": "move_random"}
         return {"type": "wait"}
@@ -257,14 +282,30 @@ class RedAgent(RobotAgent):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
 
+        # 1. Check if we have red waste to put away
         if inv["red"] >= 1:
             if p["in_disposal_zone"]:
                 return {"type": "put_away", "waste": "red"}
+                
+            # SMART PATHFINDING: If disposal zone is right next to us, move onto it!
+            if "adjacent_tiles" in p:
+                for pos, tile_info in p["adjacent_tiles"].items():
+                    if pos in p["allowed_moves"] and tile_info["is_disposal_zone"]:
+                        return {"type": "move", "to": pos}
+            
             return {"type": "move_east"}
 
+        # 2. Check if there is red waste on the CURRENT tile
         if p["cell_wastes"]["red"] > 0:
             return {"type": "pickup", "waste": "red"}
 
+        # 3. SMART PATHFINDING: Look for red waste in ADJACENT tiles
+        if "adjacent_tiles" in p:
+            for pos, tile_info in p["adjacent_tiles"].items():
+                if pos in p["allowed_moves"] and tile_info["wastes"]["red"] > 0:
+                    return {"type": "move", "to": pos}
+
+        # 4. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return {"type": "move_random"}
         return {"type": "wait"}
