@@ -108,18 +108,26 @@ class RobotMissionModel(Model):
 
     def _spawn_one_robot(self, robot_cls: type[RobotAgent]) -> None:
         robot = robot_cls(model=self)
-        pos = self._random_position_in_zones(robot.allowed_zones)
+        pos = self._random_position_in_zones(robot.allowed_zones, avoid_robot_occupied=True)
         self.grid.place_agent(robot, pos)
         self.robot_agents.append(robot)
 
-    def _random_position_in_zones(self, zones: set[str]) -> Position:
+    def _random_position_in_zones(
+        self, zones: set[str], avoid_robot_occupied: bool = False
+    ) -> Position:
         candidates: List[Position] = []
         for x in range(self.width):
             if self._zone_for_x(x) not in zones:
                 continue
             for y in range(self.height):
+                if avoid_robot_occupied and self._has_robot_at((x, y)):
+                    continue
                 candidates.append((x, y))
-        return self.random.choice(candidates) if candidates else (0, 0)
+        if candidates:
+            return self.random.choice(candidates)
+        if avoid_robot_occupied:
+            return self._random_position_in_zones(zones, avoid_robot_occupied=False)
+        return (0, 0)
 
     def step(self) -> None:
         robots = list(self.robot_agents)
@@ -229,13 +237,23 @@ class RobotMissionModel(Model):
 
     def _allowed_moves_for(self, agent: RobotAgent) -> List[Position]:
         neighbors = self.grid.get_neighborhood(agent.pos, moore=False, include_center=False)
-        return [p for p in neighbors if self._zone_for_x(p[0]) in agent.allowed_zones]
+        return [
+            p
+            for p in neighbors
+            if self._zone_for_x(p[0]) in agent.allowed_zones and not self._has_robot_at(p)
+        ]
 
     def _east_moves_for(self, agent: RobotAgent) -> List[Position]:
         return [p for p in self._allowed_moves_for(agent) if p[0] > agent.pos[0]]
 
     def _is_move_feasible(self, agent: RobotAgent, target: Position) -> bool:
         return target in self._allowed_moves_for(agent)
+
+    def _has_robot_at(self, pos: Position, exclude: Optional[RobotAgent] = None) -> bool:
+        for obj in self.grid.get_cell_list_contents([pos]):
+            if isinstance(obj, RobotAgent) and obj is not exclude:
+                return True
+        return False
 
     def _is_drop_feasible(self, agent: RobotAgent) -> bool:
         target_zone = getattr(agent, "next_zone_for_drop", None)

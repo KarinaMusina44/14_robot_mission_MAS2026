@@ -46,6 +46,11 @@ class RobotAgent(Agent):
         return False
 
     def allowed_moves(self):
+        if hasattr(self.model, "_allowed_moves_for"):
+            model_moves = self.model._allowed_moves_for(self)
+            if isinstance(model_moves, list):
+                return model_moves
+
         neighbors = self.model.grid.get_neighborhood(
             self.pos, moore=False, include_center=False
         )
