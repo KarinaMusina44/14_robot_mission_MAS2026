@@ -4,6 +4,8 @@ Date: 16 March 2026
 Members: Deodato V. Bastos Neto, Karina Musina
 """
 
+from operator import inv
+
 from mesa import Agent
 
 class RobotAgent(Agent):
@@ -72,6 +74,16 @@ class RobotAgent(Agent):
                 return True
         return False
 
+    def has_west_neighbor_in_zone(self, target_zone):
+        neighbors = self.model.grid.get_neighborhood(
+            self.pos, moore=False, include_center=False
+        )
+        x = self.pos[0]
+        for p in neighbors:
+            if p[0] < x and self.zone_of_cell(p) == target_zone:
+                return True
+        return False
+
     def cell_wastes(self):
         """Count waste objects on the current cell."""
         counts = {"green": 0, "yellow": 0, "red": 0}
@@ -98,9 +110,9 @@ class RobotAgent(Agent):
         return counts
 
     def percepts(self):
-        frontier_to_next_zone = False
+        frontier_to_next_zone_for_drop = False
         if self.next_zone_for_drop is not None:
-            frontier_to_next_zone = self.has_east_neighbor_in_zone(self.next_zone_for_drop)
+            frontier_to_next_zone_for_drop = self.has_east_neighbor_in_zone(self.next_zone_for_drop)
 
         return {
             "position": self.pos,
@@ -108,7 +120,7 @@ class RobotAgent(Agent):
             "cell_wastes": self.cell_wastes(),
             "allowed_moves": self.allowed_moves(),
             "in_disposal_zone": self.in_disposal_zone(self.pos),
-            "frontier_to_next_zone": frontier_to_next_zone,
+            "frontier_to_next_zone_for_drop": frontier_to_next_zone_for_drop,
         }
 
     def move_random(self, possible_moves):
@@ -199,6 +211,11 @@ class RobotAgent(Agent):
         new_percepts = self.percepts()
         self.update_knowledge(new_percepts, action=action, model_percepts=model_percepts)
 
+    @staticmethod
+    def deliberate(knowledge):
+        """To be implemented by subclasses."""
+        raise NotImplementedError("Subclasses must implement deliberate() method.")
+
 
 class GreenAgent(RobotAgent):
     """z1 only, pick green, transform 2 green -> 1 yellow, then carry east."""
@@ -211,6 +228,7 @@ class GreenAgent(RobotAgent):
     def deliberate(knowledge):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
+        adj = knowledge.get("model_percepts", {}).get("adjacent_tiles", {})
 
         # 1. Check if we can transform
         if inv["green"] >= 2:
@@ -218,7 +236,7 @@ class GreenAgent(RobotAgent):
 
         # 2. Check if we have yellow waste to move/drop
         if inv["yellow"] >= 1:
-            if p["frontier_to_next_zone"]:
+            if p["frontier_to_next_zone_for_drop"]:
                 return {"type": "drop", "waste": "yellow"}
             return {"type": "move_east"}
 
@@ -227,14 +245,15 @@ class GreenAgent(RobotAgent):
             return {"type": "pickup", "waste": "green"}
 
         # 4. SMART PATHFINDING: Look for green waste in ADJACENT tiles
-        if "adjacent_tiles" in p:
-            for pos, tile_info in p["adjacent_tiles"].items():
-                if pos in p["allowed_moves"] and tile_info["wastes"]["green"] > 0:
+        if adj:
+            for pos, tile_info in adj.items():
+                if pos in p["allowed_moves"] and tile_info["wastes"]["red"] > 0:
                     return {"type": "move", "to": pos}
 
         # 5. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return {"type": "move_random"}
+
         return {"type": "wait"}
 
 
@@ -249,6 +268,7 @@ class YellowAgent(RobotAgent):
     def deliberate(knowledge):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
+        adj = knowledge.get("model_percepts", {}).get("adjacent_tiles", {})
 
         # 1. Check if we can transform
         if inv["yellow"] >= 2:
@@ -256,7 +276,7 @@ class YellowAgent(RobotAgent):
 
         # 2. Check if we have red waste to move/drop
         if inv["red"] >= 1:
-            if p["frontier_to_next_zone"]:
+            if p["frontier_to_next_zone_for_drop"]:
                 return {"type": "drop", "waste": "red"}
             return {"type": "move_east"}
 
@@ -270,9 +290,28 @@ class YellowAgent(RobotAgent):
                 if pos in p["allowed_moves"] and tile_info["wastes"]["yellow"] > 0:
                     return {"type": "move", "to": pos}
 
-        # 5. Move randomly if nothing else to do
+        # 5. SEEK BORDER & PATROL: Move to the Z1/Z2 border and patrol vertically
+        if inv["yellow"] < 2:
+            at_pickup_border = False
+            if adj:
+                for pos, tile_info in adj.items():
+                    # Check if we are at the border looking into the adjacent zone
+                    if p["zone"] == "z1" and tile_info["zone"] == "z2" and pos[0] > p["position"][0]:
+                        at_pickup_border = True
+
+            if at_pickup_border and p["allowed_moves"]:
+                return {"type": "move_vertical"}
+
+            # If we are not at the border yet, navigate towards it
+            if p["zone"] == "z2" and p["allowed_moves"]:
+                return {"type": "move_west"}
+            elif p["zone"] == "z1" and p["allowed_moves"]:
+                return {"type": "move_east"}
+
+        # 6. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return {"type": "move_random"}
+
         return {"type": "wait"}
 
 
@@ -286,6 +325,7 @@ class RedAgent(RobotAgent):
     def deliberate(knowledge):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
+        adj = knowledge.get("model_percepts", {}).get("adjacent_tiles", {})
 
         # 1. Check if we have red waste to put away
         if inv["red"] >= 1:
@@ -310,7 +350,26 @@ class RedAgent(RobotAgent):
                 if pos in p["allowed_moves"] and tile_info["wastes"]["red"] > 0:
                     return {"type": "move", "to": pos}
 
-        # 4. Move randomly if nothing else to do
+        # 4. SEEK BORDER & PATROL: Move to the Z2/Z3 border and patrol vertically
+        if inv["red"] < 1:
+            at_pickup_border = False
+            if adj:
+                for pos, tile_info in adj.items():
+                    # Check if we are at the border looking into the adjacent zone
+                    if p["zone"] == "z2" and tile_info["zone"] == "z3" and pos[0] > p["position"][0]:
+                        at_pickup_border = True
+
+            if at_pickup_border and p["allowed_moves"]:
+                return {"type": "move_vertical"}
+
+            # If we are not at the border yet, navigate towards it
+            if p["zone"] == "z3" and p["allowed_moves"]:
+                return {"type": "move_west"}
+            elif p["zone"] in ("z1", "z2") and p["allowed_moves"]:
+                return {"type": "move_east"}
+
+        # 5. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return {"type": "move_random"}
+
         return {"type": "wait"}

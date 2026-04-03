@@ -35,6 +35,10 @@ class RobotMissionModel(Model):
         self.width = width
         self.height = height
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
+        self.running = True
+        self.steps = 0
+
+        n_waste = max(4, (n_waste // 4) * 4)
 
         self.radioactivity_agents: List[Radioactivity] = []
         self.waste_agents: List[Waste] = []
@@ -130,10 +134,21 @@ class RobotMissionModel(Model):
         return (0, 0)
 
     def step(self) -> None:
+        self.steps += 1
         robots = list(self.robot_agents)
         self.random.shuffle(robots)
         for robot in robots:
             robot.step()
+
+        is_clean = len(self.waste_agents) == 0
+        if is_clean:
+            for r in self.robot_agents:
+                inv = getattr(r, "knowledge", {}).get("inventory", {})
+                if sum(inv.values()) > 0:
+                    is_clean = False
+                    break
+        if is_clean:
+            self.running = False
 
     def do(self, agent: RobotAgent, action: Any) -> Dict[str, Any]:
         action_type = self._get_action_type(action)
@@ -156,6 +171,28 @@ class RobotMissionModel(Model):
             east_moves = self._east_moves_for(agent)
             if east_moves:
                 self.grid.move_agent(agent, self.random.choice(east_moves))
+                action_success = True
+            else:
+                fallback_moves = self._allowed_moves_for(agent)
+                if fallback_moves:
+                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
+                    action_success = True
+
+        elif action_type == "move_west":
+            west_moves = self._west_moves_for(agent)
+            if west_moves:
+                self.grid.move_agent(agent, self.random.choice(west_moves))
+                action_success = True
+            else:
+                fallback_moves = self._allowed_moves_for(agent)
+                if fallback_moves:
+                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
+                    action_success = True
+
+        elif action_type == "move_vertical":
+            vertical_moves = self._vertical_moves_for(agent)
+            if vertical_moves:
+                self.grid.move_agent(agent, self.random.choice(vertical_moves))
                 action_success = True
             else:
                 fallback_moves = self._allowed_moves_for(agent)
@@ -245,6 +282,12 @@ class RobotMissionModel(Model):
 
     def _east_moves_for(self, agent: RobotAgent) -> List[Position]:
         return [p for p in self._allowed_moves_for(agent) if p[0] > agent.pos[0]]
+
+    def _west_moves_for(self, agent: RobotAgent) -> List[Position]:
+        return [p for p in self._allowed_moves_for(agent) if p[0] < agent.pos[0]]
+
+    def _vertical_moves_for(self, agent: RobotAgent) -> List[Position]:
+        return [p for p in self._allowed_moves_for(agent) if p[0] == agent.pos[0]]
 
     def _is_move_feasible(self, agent: RobotAgent, target: Position) -> bool:
         return target in self._allowed_moves_for(agent)
