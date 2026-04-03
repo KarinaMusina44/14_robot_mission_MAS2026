@@ -7,9 +7,11 @@ Members: Deodato V. Bastos Neto, Karina Musina
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import numpy as np
 from mesa import Agent, Model
+from mesa.datacollection import DataCollector
 from mesa.space import MultiGrid
 
 from agents import GreenAgent, RobotAgent, RedAgent, YellowAgent
@@ -29,11 +31,14 @@ class RobotMissionModel(Model):
         n_green_robots: int = 3,
         n_yellow_robots: int = 2,
         n_red_robots: int = 1,
-        seed: Optional[int] = None,
+        rng: Optional[Union[int, np.random.Generator]] = None,
     ) -> None:
-        super().__init__(seed=seed)
+        if isinstance(rng, int):
+            rng = np.random.default_rng(rng)
+        super().__init__(rng=rng)
         self.width = width
         self.height = height
+        self.n_waste = max(0, int(n_waste))
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
 
         self.radioactivity_agents: List[Radioactivity] = []
@@ -41,17 +46,76 @@ class RobotMissionModel(Model):
         self.robot_agents: List[RobotAgent] = []
         self.waste_disposal_zone: Optional[WasteDisposalZone] = None
         self.waste_disposal_pos: Optional[Position] = None
-        self.disposed_counts: Dict[str, int] = {"green": 0, "yellow": 0, "red": 0}
+        self.disposed_counts: Dict[str, int] = {
+            "green": 0, "yellow": 0, "red": 0}
+        self.cumulative_moves: int = 0
+        self.cumulative_moves_green: int = 0
+        self.cumulative_moves_yellow: int = 0
+        self.cumulative_moves_red: int = 0
+        self.time_to_clear = None
 
         self._init_radioactivity_field()
         self._init_waste_disposal_zone()
-        self._init_waste(n_waste)
+        self._init_waste(self.n_waste)
         self._init_robots(
             n_robots=n_robots,
             n_green_robots=n_green_robots,
             n_yellow_robots=n_yellow_robots,
             n_red_robots=n_red_robots,
         )
+        self._init_datacollector()
+        self.datacollector.collect(self)
+
+    def _init_datacollector(self) -> None:
+        self.datacollector = DataCollector(
+            model_reporters={
+                "time": "time",
+                "waste_total": self._report_waste_total,
+                "waste_green": self._report_waste_green,
+                "waste_yellow": self._report_waste_yellow,
+                "waste_red": self._report_waste_red,
+                "inventory_total": self._report_inventory_total,
+                "system_waste_total": self._report_system_waste_total,
+                "cumulative_moves": "cumulative_moves",
+                "cumulative_moves_green": "cumulative_moves_green",
+                "cumulative_moves_yellow": "cumulative_moves_yellow",
+                "cumulative_moves_red": "cumulative_moves_red",
+                "time_to_clear": "time_to_clear",
+            }
+        )
+
+    def _waste_counts_total(self) -> Dict[str, int]:
+        counts = {"green": 0, "yellow": 0, "red": 0}
+        for waste in self.waste_agents:
+            waste_type = getattr(waste, "waste_type", None)
+            if waste_type in counts:
+                counts[waste_type] += 1
+        return counts
+
+    def _report_waste_total(self) -> int:
+        counts = self._waste_counts_total()
+        return counts["green"] + counts["yellow"] + counts["red"]
+
+    def _report_waste_green(self) -> int:
+        return self._waste_counts_total()["green"]
+
+    def _report_waste_yellow(self) -> int:
+        return self._waste_counts_total()["yellow"]
+
+    def _report_waste_red(self) -> int:
+        return self._waste_counts_total()["red"]
+
+    def _report_inventory_total(self) -> int:
+        total = 0
+        for robot in self.robot_agents:
+            inventory = self._get_inventory(robot)
+            total += int(inventory.get("green", 0) or 0)
+            total += int(inventory.get("yellow", 0) or 0)
+            total += int(inventory.get("red", 0) or 0)
+        return total
+
+    def _report_system_waste_total(self) -> int:
+        return self._report_waste_total() + self._report_inventory_total()
 
     def _zone_for_x(self, x: int) -> str:
         third = self.width / 3.0
@@ -95,7 +159,8 @@ class RobotMissionModel(Model):
     ) -> None:
         if n_robots > 0 and (n_green_robots + n_yellow_robots + n_red_robots) == 0:
             for _ in range(n_robots):
-                robot_cls = self.random.choice([GreenAgent, YellowAgent, RedAgent])
+                robot_cls = self.random.choice(
+                    [GreenAgent, YellowAgent, RedAgent])
                 self._spawn_one_robot(robot_cls)
             return
 
@@ -108,7 +173,8 @@ class RobotMissionModel(Model):
 
     def _spawn_one_robot(self, robot_cls: type[RobotAgent]) -> None:
         robot = robot_cls(model=self)
-        pos = self._random_position_in_zones(robot.allowed_zones, avoid_robot_occupied=True)
+        pos = self._random_position_in_zones(
+            robot.allowed_zones, avoid_robot_occupied=True)
         self.grid.place_agent(robot, pos)
         self.robot_agents.append(robot)
 
@@ -134,6 +200,10 @@ class RobotMissionModel(Model):
         self.random.shuffle(robots)
         for robot in robots:
             robot.step()
+        if self.time_to_clear is None and sum(self.disposed_counts.values()) == self.n_waste:
+            self.time_to_clear = self.time + 1
+        self.datacollector.collect(self)
+        self.time += 1
 
     def do(self, agent: RobotAgent, action: Any) -> Dict[str, Any]:
         action_type = self._get_action_type(action)
@@ -160,7 +230,8 @@ class RobotMissionModel(Model):
             else:
                 fallback_moves = self._allowed_moves_for(agent)
                 if fallback_moves:
-                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
+                    self.grid.move_agent(
+                        agent, self.random.choice(fallback_moves))
                     action_success = True
 
         elif action_type == "pickup":
@@ -205,6 +276,15 @@ class RobotMissionModel(Model):
         elif action_type == "wait":
             action_success = True
 
+        if action_success and action_type in {"move", "move_random", "move_east"}:
+            self.cumulative_moves += 1
+            if isinstance(agent, GreenAgent):
+                self.cumulative_moves_green += 1
+            elif isinstance(agent, YellowAgent):
+                self.cumulative_moves_yellow += 1
+            elif isinstance(agent, RedAgent):
+                self.cumulative_moves_red += 1
+
         return self._build_percepts(agent, action_success)
 
     @staticmethod
@@ -236,7 +316,8 @@ class RobotMissionModel(Model):
         return None
 
     def _allowed_moves_for(self, agent: RobotAgent) -> List[Position]:
-        neighbors = self.grid.get_neighborhood(agent.pos, moore=False, include_center=False)
+        neighbors = self.grid.get_neighborhood(
+            agent.pos, moore=False, include_center=False)
         return [
             p
             for p in neighbors
@@ -308,7 +389,8 @@ class RobotMissionModel(Model):
 
     def _adjacent_tiles_percepts(self, agent: RobotAgent) -> Dict[Position, Dict[str, Any]]:
         data: Dict[Position, Dict[str, Any]] = {}
-        cells = self.grid.get_neighborhood(agent.pos, moore=True, include_center=True)
+        cells = self.grid.get_neighborhood(
+            agent.pos, moore=True, include_center=True)
         for pos in cells:
             contents = self.grid.get_cell_list_contents([pos])
             data[pos] = {

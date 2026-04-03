@@ -1,5 +1,5 @@
 import matplotlib.patches as patches
-from mesa.visualization import SolaraViz, make_space_component
+from mesa.visualization import SolaraViz, make_plot_component, make_space_component
 from mesa.visualization.components import AgentPortrayalStyle
 
 from agents import GreenAgent, RedAgent, YellowAgent
@@ -11,6 +11,7 @@ from objects import Radioactivity, Waste, WasteDisposalZone
 # so we can safely populate these lists here and consume them there.
 _robots = []
 _disposal = []
+_current_model = None
 
 
 def _robot_color(agent):
@@ -34,6 +35,9 @@ def _robot_carry_count(agent):
 
 
 def agent_portrayal(agent):
+    global _current_model
+    _current_model = getattr(agent, "model", None)
+
     # 1. Radioactivity background — invisible, isolated marker
     if isinstance(agent, Radioactivity):
         return AgentPortrayalStyle(
@@ -113,9 +117,32 @@ def post_process(ax):
             zorder=7,
         )
 
+    if _current_model is not None:
+        current_time = getattr(_current_model, "time", 0.0)
+        cumulative_moves = getattr(_current_model, "cumulative_moves", 0)
+        ax.text(
+            0.01,
+            0.99,
+            f"time={current_time:.0f} | cumulative_moves={int(cumulative_moves)}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            color="black",
+            bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "black"},
+            zorder=10,
+        )
+
     # Clear collectors for next frame
     _robots.clear()
     _disposal.clear()
+
+
+def post_process_moves_plot(ax):
+    ax.set_title("Cumulative Moves by Robot Color")
+    ax.set_ylabel("Cumulative moves")
+    ax.grid(alpha=0.3)
 
 
 model_params = {
@@ -125,19 +152,28 @@ model_params = {
     "n_green_robots": {"type": "SliderInt", "value": 3,   "label": "Green robots",      "min": 0,   "max": 30,  "step": 1},
     "n_yellow_robots": {"type": "SliderInt", "value": 2,   "label": "Yellow robots",     "min": 0,   "max": 30,  "step": 1},
     "n_red_robots":   {"type": "SliderInt", "value": 1,   "label": "Red robots",        "min": 0,   "max": 30,  "step": 1},
-    "seed": 42,
+    "rng": 42,
 }
 
 model = RobotMissionModel(width=20, height=10, n_waste=30,
                           n_green_robots=3, n_yellow_robots=2,
-                          n_red_robots=1, seed=42)
+                          n_red_robots=1, rng=42)
 
 space_component = make_space_component(
     agent_portrayal, post_process=post_process)
+moves_plot_component = make_plot_component(
+    {
+        "cumulative_moves": "#111111",
+        "cumulative_moves_green": "#004B23",
+        "cumulative_moves_yellow": "#FF9F1C",
+        "cumulative_moves_red": "#9E0059",
+    },
+    post_process=post_process_moves_plot,
+)
 
 page = SolaraViz(
     model,
-    components=[space_component],
+    components=[space_component, moves_plot_component],
     model_params=model_params,
     name="Robot Mission",
 )
