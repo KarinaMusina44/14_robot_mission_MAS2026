@@ -208,3 +208,6 @@ __marimo__/
 
 #mac 
 .DS_Store
+
+# batch files
+batch_results/batch_raw.csv
