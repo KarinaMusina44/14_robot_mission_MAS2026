@@ -210,4 +210,4 @@ __marimo__/
 .DS_Store
 
 # batch files
-batch_results/batch_raw.csv
+/batch_results/batch_raw.csv
