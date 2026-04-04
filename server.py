@@ -121,16 +121,28 @@ def post_process(ax):
 model_params = {
     "width":          {"type": "SliderInt", "value": 20,  "label": "Grid width",        "min": 10,  "max": 60,  "step": 1},
     "height":         {"type": "SliderInt", "value": 10,  "label": "Grid height",       "min": 5,   "max": 40,  "step": 1},
-    "n_waste":        {"type": "SliderInt", "value": 30,  "label": "Initial green waste", "min": 0,   "max": 200, "step": 1},
+    "n_waste":        {"type": "SliderInt", "value": 32,  "label": "Initial green waste", "min": 4,   "max": 200, "step": 4},
     "n_green_robots": {"type": "SliderInt", "value": 3,   "label": "Green robots",      "min": 0,   "max": 30,  "step": 1},
     "n_yellow_robots": {"type": "SliderInt", "value": 2,   "label": "Yellow robots",     "min": 0,   "max": 30,  "step": 1},
     "n_red_robots":   {"type": "SliderInt", "value": 1,   "label": "Red robots",        "min": 0,   "max": 30,  "step": 1},
+    "vision":         {"type": "SliderInt", "value": 2,   "label": "Robot Vision Radius", "min": 1, "max": 5, "step": 1},
+    "use_memory":     {"type": "Checkbox",  "value": True, "label": "Use Red Robot Memory"},
+    "patrol_border":  {"type": "Checkbox",  "value": True, "label": "Enable Border Patrol"},
     "seed": 42,
 }
 
-model = RobotMissionModel(width=20, height=10, n_waste=30,
-                          n_green_robots=3, n_yellow_robots=2,
-                          n_red_robots=1, seed=42)
+model = RobotMissionModel(
+    width=20,
+    height=10,
+    n_waste=32,
+    n_green_robots=3,
+    n_yellow_robots=2,
+    n_red_robots=1,
+    vision=2,
+    use_memory=True,
+    patrol_border=True,
+    seed=42,
+)
 
 space_component = make_space_component(
     agent_portrayal, post_process=post_process)

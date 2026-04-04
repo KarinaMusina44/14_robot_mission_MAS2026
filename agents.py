@@ -4,8 +4,7 @@ Date: 16 March 2026
 Members: Deodato V. Bastos Neto, Karina Musina
 """
 
-from operator import inv
-
+import random
 from mesa import Agent
 
 class RobotAgent(Agent):
@@ -13,10 +12,12 @@ class RobotAgent(Agent):
 
     allowed_zones = {"z1"}
     next_zone_for_drop = None
+    prev_zone = None
     robot_color = "unknown"
 
-    def __init__(self, model):
+    def __init__(self, model, vision=2, use_memory=True, patrol_border=True):
         super().__init__(model)
+        self.vision = vision
         self.type = self.__class__.robot_color
         self.allowed_zones = set(self.__class__.allowed_zones)
         self.knowledge = {
@@ -25,6 +26,8 @@ class RobotAgent(Agent):
             "last_action": None,
             "history": [],
             "model_percepts": {},
+            "use_memory": use_memory,
+            "patrol_border": patrol_border,
         }
 
     def zone_of_cell(self, pos):
@@ -68,7 +71,7 @@ class RobotAgent(Agent):
         neighbors = self.model.grid.get_neighborhood(
             self.pos, moore=False, include_center=False
         )
-        x = self.pos[0]
+        x = self.pos[0] # type: ignore
         for p in neighbors:
             if p[0] > x and self.zone_of_cell(p) == target_zone:
                 return True
@@ -78,7 +81,7 @@ class RobotAgent(Agent):
         neighbors = self.model.grid.get_neighborhood(
             self.pos, moore=False, include_center=False
         )
-        x = self.pos[0]
+        x = self.pos[0] # type: ignore
         for p in neighbors:
             if p[0] < x and self.zone_of_cell(p) == target_zone:
                 return True
@@ -96,18 +99,39 @@ class RobotAgent(Agent):
             waste = getattr(obj, "waste_type", None)
             if waste in counts:
                 counts[waste] += 1
-                continue
-
-            # Fallback if waste is identified only by class name or color.
-            label = f"{getattr(obj, 'color', '')} {obj.__class__.__name__}".lower()
-            if "green" in label:
-                counts["green"] += 1
-            elif "yellow" in label:
-                counts["yellow"] += 1
-            elif "red" in label:
-                counts["red"] += 1
 
         return counts
+
+    def get_visible_tiles(self):
+        """Build percepts for all tiles within the vision radius."""
+        visible = {}
+        neighbors = self.model.grid.get_neighborhood(
+            self.pos, moore=True, include_center=False, radius=self.vision
+        )
+        for pos in neighbors:
+            contents = self.model.grid.get_cell_list_contents([pos])
+            
+            zone_attr = None
+            is_disp = False
+            wastes = {"green": 0, "yellow": 0, "red": 0}
+            
+            for obj in contents:
+                z = getattr(obj, "zone", None)
+                if z in {"z1", "z2", "z3"}:
+                    zone_attr = z
+                if isinstance(z, str) and "disposal" in z.lower():
+                    is_disp = True
+                    
+                w = getattr(obj, "waste_type", None)
+                if w in wastes:
+                    wastes[w] += 1
+
+            visible[pos] = {
+                "zone": zone_attr,
+                "is_disposal_zone": is_disp,
+                "wastes": wastes
+            }
+        return visible
 
     def percepts(self):
         frontier_to_next_zone_for_drop = False
@@ -121,7 +145,23 @@ class RobotAgent(Agent):
             "allowed_moves": self.allowed_moves(),
             "in_disposal_zone": self.in_disposal_zone(self.pos),
             "frontier_to_next_zone_for_drop": frontier_to_next_zone_for_drop,
+            "visible_tiles": self.get_visible_tiles(), # Expose extended vision
         }
+
+    @staticmethod
+    def best_move_towards(target, allowed_moves):
+        """Helper to step towards a distant target."""
+        if target in allowed_moves:
+            return target
+        best_move = None
+        best_dist = float('inf')
+        for m in allowed_moves:
+            # Manhattan distance
+            dist = abs(m[0] - target[0]) + abs(m[1] - target[1])
+            if dist < best_dist:
+                best_dist = dist
+                best_move = m
+        return best_move
 
     def move_random(self, possible_moves):
         if not possible_moves:
@@ -140,7 +180,7 @@ class RobotAgent(Agent):
 
         elif action_type == "move_east":
             moves = self.allowed_moves()
-            x = self.pos[0]
+            x = self.pos[0] # type: ignore
             east_moves = [m for m in moves if m[0] > x]
             if east_moves:
                 self.move_random(east_moves)
@@ -228,7 +268,7 @@ class GreenAgent(RobotAgent):
     def deliberate(knowledge):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
-        adj = knowledge.get("model_percepts", {}).get("adjacent_tiles", {})
+        vis = p.get("visible_tiles", {})
 
         # 1. Check if we can transform
         if inv["green"] >= 2:
@@ -244,16 +284,17 @@ class GreenAgent(RobotAgent):
         if p["cell_wastes"]["green"] > 0:
             return {"type": "pickup", "waste": "green"}
 
-        # 4. SMART PATHFINDING: Look for green waste in ADJACENT tiles
-        if adj:
-            for pos, tile_info in adj.items():
-                if pos in p["allowed_moves"] and tile_info["wastes"]["red"] > 0:
-                    return {"type": "move", "to": pos}
+        # 4. Pathfinding (Extended Vision)
+        targets = [pos for pos, info in vis.items() if info["wastes"]["green"] > 0]
+        if targets:
+            targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
+            best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
+            if best_move:
+                return {"type": "move", "to": best_move}
 
         # 5. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return {"type": "move_random"}
-
         return {"type": "wait"}
 
 
@@ -268,7 +309,17 @@ class YellowAgent(RobotAgent):
     def deliberate(knowledge):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
-        adj = knowledge.get("model_percepts", {}).get("adjacent_tiles", {})
+        vis = p.get("visible_tiles", {})
+
+        # Anti-Deadlock Timeout
+        if inv["yellow"] == 1:
+            knowledge["frustration"] = knowledge.get("frustration", 0) + 1
+        else:
+            knowledge["frustration"] = 0
+
+        if knowledge.get("frustration", 0) > 20:
+            knowledge["frustration"] = 0
+            return {"type": "drop", "waste": "yellow"}
 
         # 1. Check if we can transform
         if inv["yellow"] >= 2:
@@ -284,29 +335,37 @@ class YellowAgent(RobotAgent):
         if p["cell_wastes"]["yellow"] > 0:
             return {"type": "pickup", "waste": "yellow"}
 
-        # 4. SMART PATHFINDING: Look for yellow waste in ADJACENT tiles
-        if "adjacent_tiles" in p:
-            for pos, tile_info in p["adjacent_tiles"].items():
-                if pos in p["allowed_moves"] and tile_info["wastes"]["yellow"] > 0:
-                    return {"type": "move", "to": pos}
+        # 4. Pathfinding
+        targets = [pos for pos, info in vis.items() if info["wastes"]["yellow"] > 0]
+        if targets:
+            targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
+            best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
+            if best_move:
+                return {"type": "move", "to": best_move}
 
-        # 5. SEEK BORDER & PATROL: Move to the Z1/Z2 border and patrol vertically
-        if inv["yellow"] < 2:
+        # 5. Seek border & patrol: Move to the Z1/Z2 border and patrol vertically
+        if inv["yellow"] < 2 and knowledge.get("patrol_border", True):
             at_pickup_border = False
-            if adj:
-                for pos, tile_info in adj.items():
-                    # Check if we are at the border looking into the adjacent zone
-                    if p["zone"] == "z1" and tile_info["zone"] == "z2" and pos[0] > p["position"][0]:
+            if vis:
+                for pos, tile_info in vis.items():
+                    if p["zone"] == "z1" and tile_info["zone"] == "z2" and pos[0] == p["position"][0] + 1:
                         at_pickup_border = True
 
-            if at_pickup_border and p["allowed_moves"]:
-                return {"type": "move_vertical"}
+            if at_pickup_border:
+                vertical_moves = [m for m in p["allowed_moves"] if m[0] == p["position"][0]]
+                if vertical_moves:
+                    return {"type": "move", "to": random.choice(vertical_moves)}
+                return {"type": "wait"}
 
             # If we are not at the border yet, navigate towards it
             if p["zone"] == "z2" and p["allowed_moves"]:
-                return {"type": "move_west"}
+                west_moves = [m for m in p["allowed_moves"] if m[0] < p["position"][0]]
+                if west_moves:
+                    return {"type": "move", "to": random.choice(west_moves)}
             elif p["zone"] == "z1" and p["allowed_moves"]:
-                return {"type": "move_east"}
+                east_moves = [m for m in p["allowed_moves"] if m[0] > p["position"][0]]
+                if east_moves:
+                    return {"type": "move", "to": random.choice(east_moves)}
 
         # 6. Move randomly if nothing else to do
         if p["allowed_moves"]:
@@ -326,32 +385,44 @@ class RedAgent(RobotAgent):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
         adj = knowledge.get("model_percepts", {}).get("adjacent_tiles", {})
+        vis = p.get("visible_tiles", {})
+
+        # MEMORY: Save the position of the disposal zone if we see it or are on it
+        if knowledge.get("use_memory", True):
+            if p["in_disposal_zone"]:
+                knowledge["disposal_zone_pos"] = p["position"]
+            else:
+                for pos, info in vis.items():
+                    if info["is_disposal_zone"]:
+                        knowledge["disposal_zone_pos"] = pos
+                        break
 
         # 1. Check if we have red waste to put away
         if inv["red"] >= 1:
             if p["in_disposal_zone"]:
                 return {"type": "put_away", "waste": "red"}
-                
-            # SMART PATHFINDING: If disposal zone is right next to us, move onto it!
-            if "adjacent_tiles" in p:
-                for pos, tile_info in p["adjacent_tiles"].items():
-                    if pos in p["allowed_moves"] and tile_info["is_disposal_zone"]:
-                        return {"type": "move", "to": pos}
+
+            # Pathfinding: Move straight to the disposal zone if we remember it
+            if knowledge.get("use_memory", True) and "disposal_zone_pos" in knowledge:
+                best_move = RobotAgent.best_move_towards(knowledge["disposal_zone_pos"], p["allowed_moves"])
+                if best_move:
+                    return {"type": "move", "to": best_move}
             
+            # Otherwise, keep exploring east until we find it
             return {"type": "move_east"}
 
         # 2. Check if there is red waste on the CURRENT tile
         if p["cell_wastes"]["red"] > 0:
             return {"type": "pickup", "waste": "red"}
 
-        # 3. SMART PATHFINDING: Look for red waste in ADJACENT tiles
+        # 3. Pathfinding: Look for red waste in ADJACENT tiles
         if "adjacent_tiles" in p:
             for pos, tile_info in p["adjacent_tiles"].items():
                 if pos in p["allowed_moves"] and tile_info["wastes"]["red"] > 0:
                     return {"type": "move", "to": pos}
 
-        # 4. SEEK BORDER & PATROL: Move to the Z2/Z3 border and patrol vertically
-        if inv["red"] < 1:
+        # 4. Seek border & patrol: Move to the Z2/Z3 border and patrol vertically
+        if inv["red"] < 1 and knowledge.get("patrol_border", True):
             at_pickup_border = False
             if adj:
                 for pos, tile_info in adj.items():

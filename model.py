@@ -9,7 +9,7 @@ from __future__ import annotations
 import contextlib
 from typing import Any, Dict, List, Optional, Tuple
 
-from mesa import Agent, Model
+from mesa import Model
 from mesa.space import MultiGrid
 
 from agents import GreenAgent, RobotAgent, RedAgent, YellowAgent
@@ -29,6 +29,9 @@ class RobotMissionModel(Model):
         n_green_robots: int = 3,
         n_yellow_robots: int = 2,
         n_red_robots: int = 1,
+        vision: int = 1,
+        use_memory: bool = True,
+        patrol_border: bool = False,
         seed: Optional[int] = None,
     ) -> None:
         super().__init__(seed=seed)
@@ -55,6 +58,9 @@ class RobotMissionModel(Model):
             n_green_robots=n_green_robots,
             n_yellow_robots=n_yellow_robots,
             n_red_robots=n_red_robots,
+            vision=vision,
+            use_memory=use_memory,
+            patrol_border=patrol_border,
         )
 
     def _zone_for_x(self, x: int) -> str:
@@ -96,22 +102,25 @@ class RobotMissionModel(Model):
         n_green_robots: int,
         n_yellow_robots: int,
         n_red_robots: int,
+        vision: int = 1,
+        use_memory: bool = True,
+        patrol_border: bool = False,
     ) -> None:
         if n_robots > 0 and (n_green_robots + n_yellow_robots + n_red_robots) == 0:
             for _ in range(n_robots):
                 robot_cls = self.random.choice([GreenAgent, YellowAgent, RedAgent])
-                self._spawn_one_robot(robot_cls)
+                self._spawn_one_robot(robot_cls, vision, use_memory, patrol_border)
             return
 
         for _ in range(max(0, n_green_robots)):
-            self._spawn_one_robot(GreenAgent)
+            self._spawn_one_robot(GreenAgent, vision, use_memory, patrol_border)
         for _ in range(max(0, n_yellow_robots)):
-            self._spawn_one_robot(YellowAgent)
+            self._spawn_one_robot(YellowAgent, vision, use_memory, patrol_border)
         for _ in range(max(0, n_red_robots)):
-            self._spawn_one_robot(RedAgent)
+            self._spawn_one_robot(RedAgent, vision, use_memory, patrol_border)
 
-    def _spawn_one_robot(self, robot_cls: type[RobotAgent]) -> None:
-        robot = robot_cls(model=self)
+    def _spawn_one_robot(self, robot_cls: type[RobotAgent], vision: int, use_memory: bool, patrol_border: bool) -> None:
+        robot = robot_cls(model=self, vision=vision, use_memory=use_memory, patrol_border=patrol_border)
         pos = self._random_position_in_zones(robot.allowed_zones, avoid_robot_occupied=True)
         self.grid.place_agent(robot, pos)
         self.robot_agents.append(robot)
@@ -203,7 +212,7 @@ class RobotMissionModel(Model):
         elif action_type == "pickup":
             waste_type = self._action_get(action, "waste")
             if waste_type in {"green", "yellow", "red"} and self.remove_one_waste_at(
-                agent.pos, waste_type
+                agent.pos, waste_type # type: ignore
             ):
                 inventory[waste_type] += 1
                 action_success = True
@@ -225,7 +234,7 @@ class RobotMissionModel(Model):
                 and self._is_drop_feasible(agent)
             ):
                 inventory[waste_type] -= 1
-                self.add_one_waste_at(agent.pos, waste_type)
+                self.add_one_waste_at(agent.pos, waste_type) # type: ignore
                 action_success = True
 
         elif action_type == "put_away":
@@ -233,7 +242,7 @@ class RobotMissionModel(Model):
             if (
                 waste_type in inventory
                 and inventory[waste_type] > 0
-                and self._is_disposal_cell(agent.pos)
+                and self._is_disposal_cell(agent.pos) # type: ignore
             ):
                 inventory[waste_type] -= 1
                 self.disposed_counts[waste_type] += 1
@@ -273,7 +282,7 @@ class RobotMissionModel(Model):
         return None
 
     def _allowed_moves_for(self, agent: RobotAgent) -> List[Position]:
-        neighbors = self.grid.get_neighborhood(agent.pos, moore=False, include_center=False)
+        neighbors = self.grid.get_neighborhood(agent.pos, moore=False, include_center=False) # type: ignore
         return [
             p
             for p in neighbors
@@ -281,13 +290,13 @@ class RobotMissionModel(Model):
         ]
 
     def _east_moves_for(self, agent: RobotAgent) -> List[Position]:
-        return [p for p in self._allowed_moves_for(agent) if p[0] > agent.pos[0]]
+        return [p for p in self._allowed_moves_for(agent) if p[0] > agent.pos[0]] # type: ignore
 
     def _west_moves_for(self, agent: RobotAgent) -> List[Position]:
-        return [p for p in self._allowed_moves_for(agent) if p[0] < agent.pos[0]]
+        return [p for p in self._allowed_moves_for(agent) if p[0] < agent.pos[0]] # type: ignore
 
     def _vertical_moves_for(self, agent: RobotAgent) -> List[Position]:
-        return [p for p in self._allowed_moves_for(agent) if p[0] == agent.pos[0]]
+        return [p for p in self._allowed_moves_for(agent) if p[0] == agent.pos[0]] # type: ignore
 
     def _is_move_feasible(self, agent: RobotAgent, target: Position) -> bool:
         return target in self._allowed_moves_for(agent)
@@ -302,8 +311,8 @@ class RobotMissionModel(Model):
         target_zone = getattr(agent, "next_zone_for_drop", None)
         if not isinstance(target_zone, str):
             return False
-        for p in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False):
-            if p[0] > agent.pos[0] and self._zone_for_x(p[0]) == target_zone:
+        for p in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False): # type: ignore
+            if p[0] > agent.pos[0] and self._zone_for_x(p[0]) == target_zone: # type: ignore
                 return True
         return False
 
@@ -351,7 +360,7 @@ class RobotMissionModel(Model):
 
     def _adjacent_tiles_percepts(self, agent: RobotAgent) -> Dict[Position, Dict[str, Any]]:
         data: Dict[Position, Dict[str, Any]] = {}
-        cells = self.grid.get_neighborhood(agent.pos, moore=True, include_center=True)
+        cells = self.grid.get_neighborhood(agent.pos, moore=True, include_center=True) # type: ignore
         for pos in cells:
             contents = self.grid.get_cell_list_contents([pos])
             data[pos] = {
@@ -366,17 +375,17 @@ class RobotMissionModel(Model):
         next_zone = getattr(agent, "next_zone_for_drop", None)
         frontier_to_next_zone = False
         if isinstance(next_zone, str):
-            for pos in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False):
-                if pos[0] > agent.pos[0] and self._zone_for_x(pos[0]) == next_zone:
+            for pos in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False): # type: ignore
+                if pos[0] > agent.pos[0] and self._zone_for_x(pos[0]) == next_zone: # type: ignore
                     frontier_to_next_zone = True
                     break
 
         return {
-            "position": tuple(agent.pos),
-            "zone": self._zone_for_x(agent.pos[0]),
-            "cell_wastes": self._cell_wastes(agent.pos),
+            "position": tuple(agent.pos), # type: ignore
+            "zone": self._zone_for_x(agent.pos[0]), # type: ignore
+            "cell_wastes": self._cell_wastes(agent.pos), # type: ignore
             "allowed_moves": self._allowed_moves_for(agent),
-            "in_disposal_zone": self._is_disposal_cell(agent.pos),
+            "in_disposal_zone": self._is_disposal_cell(agent.pos), # type: ignore
             "frontier_to_next_zone": frontier_to_next_zone,
             "inventory": dict(self._get_inventory(agent)),
             "adjacent_tiles": self._adjacent_tiles_percepts(agent),
