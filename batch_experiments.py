@@ -35,6 +35,14 @@ def _parse_green_waste_values(raw: str) -> List[int]:
     return values
 
 
+def _parse_vision_values(raw: str) -> List[int]:
+    values = _parse_int_list(raw)
+    invalid = [v for v in values if v < 1]
+    if invalid:
+        raise ValueError(f"Invalid --vision values (must be >= 1): {invalid}")
+    return values
+
+
 def _pick_reference_value(values: list[int]) -> int:
     unique_sorted = sorted(set(values))
     return unique_sorted[len(unique_sorted) // 2]
@@ -55,6 +63,7 @@ def _fixed_values_label(fixed_values: dict[str, int]) -> str:
         "n_red_robots": "red",
         "n_yellow_robots": "yellow",
         "n_waste": "waste",
+        "vision": "vision",
     }
     parts = [f"{display_names.get(col, col)}={value}" for col, value in fixed_values.items()]
     return ", ".join(parts)
@@ -167,6 +176,12 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated values for number of red robots.",
     )
     parser.add_argument(
+        "--vision",
+        type=str,
+        default="1",
+        help="Comma-separated values for robot vision radius.",
+    )
+    parser.add_argument(
         "--iterations",
         type=int,
         default=5,
@@ -260,6 +275,7 @@ def main() -> int:
         "n_green_robots": _parse_int_list(args.n_green_robots),
         "n_yellow_robots": _parse_int_list(args.n_yellow_robots),
         "n_red_robots": _parse_int_list(args.n_red_robots),
+        "vision": _parse_vision_values(args.vision),
     }
     seed_values = [args.seed_start + i for i in range(max(1, args.iterations))]
 
@@ -305,6 +321,7 @@ def main() -> int:
         "n_green_robots",
         "n_yellow_robots",
         "n_red_robots",
+        "vision",
     ]
     completion_df = _extract_completion_per_run(
         df=df,
@@ -341,6 +358,7 @@ def main() -> int:
         "n_red_robots": _pick_reference_value(parameters["n_red_robots"]),
         "n_yellow_robots": _pick_reference_value(parameters["n_yellow_robots"]),
         "n_waste": _pick_reference_value(parameters["n_waste"]),
+        "vision": _pick_reference_value(parameters["vision"]),
     }
     print(f"Fixed reference values (median): {reference_values}")
 
@@ -372,6 +390,13 @@ def main() -> int:
             "#264653",
             "#2A9D8F",
             outdir / "plot_time_to_clear_vs_waste.png",
+        ),
+        (
+            "vision",
+            "Robot vision radius",
+            "#355070",
+            "#6D597A",
+            outdir / "plot_time_to_clear_vs_vision.png",
         ),
     ]
 
