@@ -10,7 +10,7 @@ import contextlib
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
-from mesa import Agent, Model
+from mesa import Model
 from mesa.datacollection import DataCollector
 from mesa.space import MultiGrid
 
@@ -31,6 +31,9 @@ class RobotMissionModel(Model):
         n_green_robots: int = 3,
         n_yellow_robots: int = 2,
         n_red_robots: int = 1,
+        vision: int = 1,
+        use_memory: bool = True,
+        patrol_border: bool = False,
         rng: Optional[Union[int, np.random.Generator]] = None,
     ) -> None:
         if isinstance(rng, int):
@@ -40,6 +43,10 @@ class RobotMissionModel(Model):
         self.height = height
         self.n_waste = max(0, int(n_waste))
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
+        self.running = True
+        self.steps = 0
+
+        n_waste = max(4, (n_waste // 4) * 4)
 
         self.radioactivity_agents: List[Radioactivity] = []
         self.waste_agents: List[Waste] = []
@@ -62,6 +69,9 @@ class RobotMissionModel(Model):
             n_green_robots=n_green_robots,
             n_yellow_robots=n_yellow_robots,
             n_red_robots=n_red_robots,
+            vision=vision,
+            use_memory=use_memory,
+            patrol_border=patrol_border,
         )
         self._init_datacollector()
         self.datacollector.collect(self)
@@ -156,6 +166,9 @@ class RobotMissionModel(Model):
         n_green_robots: int,
         n_yellow_robots: int,
         n_red_robots: int,
+        vision: int = 1,
+        use_memory: bool = True,
+        patrol_border: bool = False,
     ) -> None:
         if n_robots > 0 and (n_green_robots + n_yellow_robots + n_red_robots) == 0:
             for _ in range(n_robots):
@@ -165,16 +178,19 @@ class RobotMissionModel(Model):
             return
 
         for _ in range(max(0, n_green_robots)):
-            self._spawn_one_robot(GreenAgent)
+            self._spawn_one_robot(GreenAgent, vision, use_memory, patrol_border)
         for _ in range(max(0, n_yellow_robots)):
-            self._spawn_one_robot(YellowAgent)
+            self._spawn_one_robot(YellowAgent, vision, use_memory, patrol_border)
         for _ in range(max(0, n_red_robots)):
-            self._spawn_one_robot(RedAgent)
+            self._spawn_one_robot(RedAgent, vision, use_memory, patrol_border)
 
     def _spawn_one_robot(self, robot_cls: type[RobotAgent]) -> None:
         robot = robot_cls(model=self)
         pos = self._random_position_in_zones(
             robot.allowed_zones, avoid_robot_occupied=True)
+    def _spawn_one_robot(self, robot_cls: type[RobotAgent], vision: int, use_memory: bool, patrol_border: bool) -> None:
+        robot = robot_cls(model=self, vision=vision, use_memory=use_memory, patrol_border=patrol_border)
+        pos = self._random_position_in_zones(robot.allowed_zones, avoid_robot_occupied=True)
         self.grid.place_agent(robot, pos)
         self.robot_agents.append(robot)
 
@@ -196,15 +212,11 @@ class RobotMissionModel(Model):
         return (0, 0)
 
     def step(self) -> None:
+        self.steps += 1
         robots = list(self.robot_agents)
         self.random.shuffle(robots)
         for robot in robots:
             robot.step()
-        if self.time_to_clear is None and self._report_system_waste_total() <= 0:
-            self.time_to_clear = self.time + 1
-            self.running = False
-        self.datacollector.collect(self)
-        self.time += 1
 
     def do(self, agent: RobotAgent, action: Any) -> Dict[str, Any]:
         action_type = self._get_action_type(action)
@@ -235,10 +247,55 @@ class RobotMissionModel(Model):
                         agent, self.random.choice(fallback_moves))
                     action_success = True
 
+        elif action_type == "move_west":
+            west_moves = self._west_moves_for(agent)
+            if west_moves:
+                self.grid.move_agent(agent, self.random.choice(west_moves))
+                action_success = True
+            else:
+                fallback_moves = self._allowed_moves_for(agent)
+                if fallback_moves:
+                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
+                    action_success = True
+
+        elif action_type == "move_vertical":
+            vertical_moves = self._vertical_moves_for(agent)
+            if vertical_moves:
+                self.grid.move_agent(agent, self.random.choice(vertical_moves))
+                action_success = True
+            else:
+                fallback_moves = self._allowed_moves_for(agent)
+                if fallback_moves:
+                    self.grid.move_agent(
+                        agent, self.random.choice(fallback_moves))
+                    action_success = True
+
+        elif action_type == "move_west":
+            west_moves = self._west_moves_for(agent)
+            if west_moves:
+                self.grid.move_agent(agent, self.random.choice(west_moves))
+                action_success = True
+            else:
+                fallback_moves = self._allowed_moves_for(agent)
+                if fallback_moves:
+                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
+                    action_success = True
+
+        elif action_type == "move_vertical":
+            vertical_moves = self._vertical_moves_for(agent)
+            if vertical_moves:
+                self.grid.move_agent(agent, self.random.choice(vertical_moves))
+                action_success = True
+            else:
+                fallback_moves = self._allowed_moves_for(agent)
+                if fallback_moves:
+                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
+                    action_success = True
+
         elif action_type == "pickup":
             waste_type = self._action_get(action, "waste")
             if waste_type in {"green", "yellow", "red"} and self.remove_one_waste_at(
-                agent.pos, waste_type
+                agent.pos, waste_type # type: ignore
             ):
                 inventory[waste_type] += 1
                 action_success = True
@@ -260,7 +317,7 @@ class RobotMissionModel(Model):
                 and self._is_drop_feasible(agent)
             ):
                 inventory[waste_type] -= 1
-                self.add_one_waste_at(agent.pos, waste_type)
+                self.add_one_waste_at(agent.pos, waste_type) # type: ignore
                 action_success = True
 
         elif action_type == "put_away":
@@ -268,7 +325,7 @@ class RobotMissionModel(Model):
             if (
                 waste_type in inventory
                 and inventory[waste_type] > 0
-                and self._is_disposal_cell(agent.pos)
+                and self._is_disposal_cell(agent.pos) # type: ignore
             ):
                 inventory[waste_type] -= 1
                 self.disposed_counts[waste_type] += 1
@@ -318,7 +375,7 @@ class RobotMissionModel(Model):
 
     def _allowed_moves_for(self, agent: RobotAgent) -> List[Position]:
         neighbors = self.grid.get_neighborhood(
-            agent.pos, moore=False, include_center=False)
+            agent.pos, moore=False, include_center=False) # type: ignore
         return [
             p
             for p in neighbors
@@ -326,7 +383,13 @@ class RobotMissionModel(Model):
         ]
 
     def _east_moves_for(self, agent: RobotAgent) -> List[Position]:
-        return [p for p in self._allowed_moves_for(agent) if p[0] > agent.pos[0]]
+        return [p for p in self._allowed_moves_for(agent) if p[0] > agent.pos[0]] # type: ignore
+
+    def _west_moves_for(self, agent: RobotAgent) -> List[Position]:
+        return [p for p in self._allowed_moves_for(agent) if p[0] < agent.pos[0]] # type: ignore
+
+    def _vertical_moves_for(self, agent: RobotAgent) -> List[Position]:
+        return [p for p in self._allowed_moves_for(agent) if p[0] == agent.pos[0]] # type: ignore
 
     def _is_move_feasible(self, agent: RobotAgent, target: Position) -> bool:
         return target in self._allowed_moves_for(agent)
@@ -341,8 +404,8 @@ class RobotMissionModel(Model):
         target_zone = getattr(agent, "next_zone_for_drop", None)
         if not isinstance(target_zone, str):
             return False
-        for p in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False):
-            if p[0] > agent.pos[0] and self._zone_for_x(p[0]) == target_zone:
+        for p in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False): # type: ignore
+            if p[0] > agent.pos[0] and self._zone_for_x(p[0]) == target_zone: # type: ignore
                 return True
         return False
 
@@ -406,17 +469,17 @@ class RobotMissionModel(Model):
         next_zone = getattr(agent, "next_zone_for_drop", None)
         frontier_to_next_zone = False
         if isinstance(next_zone, str):
-            for pos in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False):
-                if pos[0] > agent.pos[0] and self._zone_for_x(pos[0]) == next_zone:
+            for pos in self.grid.get_neighborhood(agent.pos, moore=False, include_center=False): # type: ignore
+                if pos[0] > agent.pos[0] and self._zone_for_x(pos[0]) == next_zone: # type: ignore
                     frontier_to_next_zone = True
                     break
 
         return {
-            "position": tuple(agent.pos),
-            "zone": self._zone_for_x(agent.pos[0]),
-            "cell_wastes": self._cell_wastes(agent.pos),
+            "position": tuple(agent.pos), # type: ignore
+            "zone": self._zone_for_x(agent.pos[0]), # type: ignore
+            "cell_wastes": self._cell_wastes(agent.pos), # type: ignore
             "allowed_moves": self._allowed_moves_for(agent),
-            "in_disposal_zone": self._is_disposal_cell(agent.pos),
+            "in_disposal_zone": self._is_disposal_cell(agent.pos), # type: ignore
             "frontier_to_next_zone": frontier_to_next_zone,
             "inventory": dict(self._get_inventory(agent)),
             "adjacent_tiles": self._adjacent_tiles_percepts(agent),
