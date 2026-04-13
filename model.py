@@ -200,8 +200,9 @@ class RobotMissionModel(Model):
         self.random.shuffle(robots)
         for robot in robots:
             robot.step()
-        if self.time_to_clear is None and sum(self.disposed_counts.values()) == self.n_waste:
+        if self.time_to_clear is None and self._report_system_waste_total() <= 0:
             self.time_to_clear = self.time + 1
+            self.running = False
         self.datacollector.collect(self)
         self.time += 1
 
