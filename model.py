@@ -455,7 +455,7 @@ class RobotMissionModel(Model):
     def _adjacent_tiles_percepts(self, agent: RobotAgent) -> Dict[Position, Dict[str, Any]]:
         data: Dict[Position, Dict[str, Any]] = {}
         cells = self.grid.get_neighborhood(
-            agent.pos, moore=True, include_center=True)
+            agent.pos, moore=True, include_center=True) # type: ignore
         for pos in cells:
             contents = self.grid.get_cell_list_contents([pos])
             data[pos] = {
@@ -470,7 +470,7 @@ class RobotMissionModel(Model):
         data: Dict[Position, Dict[str, Any]] = {}
         radius = max(1, int(getattr(agent, "vision", 1) or 1))
         cells = self.grid.get_neighborhood(
-            agent.pos, moore=True, include_center=False, radius=radius
+            agent.pos, moore=True, include_center=False, radius=radius # type: ignore
         )
         for pos in cells:
             data[pos] = {
