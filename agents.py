@@ -28,6 +28,7 @@ class RobotAgent(Agent):
             "model_percepts": {},
             "use_memory": use_memory,
             "patrol_border": patrol_border,
+            "inbox": [],
         }
 
     def zone_of_cell(self, pos):
@@ -247,6 +248,13 @@ class RobotAgent(Agent):
         percepts = self.percepts()
         self.update_knowledge(percepts)
         action = self.deliberate(self.knowledge)
+
+        if "messages" in action:
+            for msg in action["messages"]:
+                for other_agent in self.model.robot_agents:
+                    if other_agent is not self and other_agent.type == msg["to"]:
+                        other_agent.knowledge["inbox"].append(msg)
+
         model_percepts = self.do(action)
         new_percepts = self.percepts()
         self.update_knowledge(new_percepts, action=action, model_percepts=model_percepts)
@@ -277,7 +285,11 @@ class GreenAgent(RobotAgent):
         # 2. Check if we have yellow waste to move/drop
         if inv["yellow"] >= 1:
             if p["frontier_to_next_zone_for_drop"]:
-                return {"type": "drop", "waste": "yellow"}
+                return {
+                        "type": "drop", 
+                        "waste": "yellow",
+                        "messages": [{"to": "yellow", "topic": "dropped_waste", "data": p["position"]}]
+                    }
             return {"type": "move_east"}
 
         # 3. Check if there is green waste on the CURRENT tile
@@ -311,6 +323,22 @@ class YellowAgent(RobotAgent):
         inv = knowledge["inventory"]
         vis = p.get("visible_tiles", {})
 
+         # Read messages from Green robots)
+        knowledge.setdefault("known_wastes", set())
+        for msg in knowledge.get("inbox", []):
+            if msg["topic"] == "dropped_waste":
+                knowledge["known_wastes"].add(msg["data"])
+        knowledge["inbox"] = []
+
+        # Remove yellow wastes from memory if they are no longer there
+        to_remove = set()
+        for kw in knowledge["known_wastes"]:
+            if kw == p["position"] and p["cell_wastes"]["yellow"] == 0:
+                to_remove.add(kw)
+            elif kw in vis and vis[kw]["wastes"]["yellow"] == 0:
+                to_remove.add(kw)
+        knowledge["known_wastes"] -= to_remove
+
         # Anti-Deadlock Timeout
         if inv["yellow"] == 1:
             knowledge["frustration"] = knowledge.get("frustration", 0) + 1
@@ -328,7 +356,11 @@ class YellowAgent(RobotAgent):
         # 2. Check if we have red waste to move/drop
         if inv["red"] >= 1:
             if p["frontier_to_next_zone_for_drop"]:
-                return {"type": "drop", "waste": "red"}
+                return {
+                    "type": "drop",
+                    "waste": "red",
+                    "messages": [{"to": "red", "topic": "dropped_waste", "data": p["position"]}]
+                }
             return {"type": "move_east"}
 
         # 3. Check if there is yellow waste on the CURRENT tile
@@ -387,7 +419,25 @@ class RedAgent(RobotAgent):
         adj = knowledge.get("model_percepts", {}).get("adjacent_tiles", {})
         vis = p.get("visible_tiles", {})
 
-        # MEMORY: Save the position of the disposal zone if we see it or are on it
+        # Read messages from Yellow robots and peers)
+        knowledge.setdefault("known_wastes", set())
+        for msg in knowledge.get("inbox", []):
+            if msg["topic"] == "disposal_zone":
+                knowledge["disposal_zone_pos"] = msg["data"]
+            elif msg["topic"] == "dropped_waste":
+                knowledge["known_wastes"].add(msg["data"])
+        knowledge["inbox"] = []
+
+        # Remove red wastes from memory if they are no longer there
+        to_remove = set()
+        for kw in knowledge["known_wastes"]:
+            if kw == p["position"] and p["cell_wastes"]["red"] == 0:
+                to_remove.add(kw)
+            elif kw in vis and vis[kw]["wastes"]["red"] == 0:
+                to_remove.add(kw)
+        knowledge["known_wastes"] -= to_remove
+
+        # Save the position of the disposal zone if we see it or are on it
         if knowledge.get("use_memory", True):
             if p["in_disposal_zone"]:
                 knowledge["disposal_zone_pos"] = p["position"]
@@ -397,29 +447,46 @@ class RedAgent(RobotAgent):
                         knowledge["disposal_zone_pos"] = pos
                         break
 
+        # Share discovery with peers
+        messages_to_send = []
+        if "disposal_zone_pos" in knowledge and not knowledge.get("has_broadcasted_disposal"):
+            messages_to_send.append({
+                "to": "red",
+                "topic": "disposal_zone",
+                "data": knowledge["disposal_zone_pos"]
+            })
+            # Mark as broadcasted so we don't spam the network every single turn
+            knowledge["has_broadcasted_disposal"] = True
+
+        def with_msgs(action_dict):
+            """Helper to attach outgoing messages to the chosen action without consuming a turn."""
+            if messages_to_send:
+                action_dict["messages"] = messages_to_send
+            return action_dict
+
         # 1. Check if we have red waste to put away
         if inv["red"] >= 1:
             if p["in_disposal_zone"]:
-                return {"type": "put_away", "waste": "red"}
+                return with_msgs({"type": "put_away", "waste": "red"})
 
             # Pathfinding: Move straight to the disposal zone if we remember it
             if knowledge.get("use_memory", True) and "disposal_zone_pos" in knowledge:
                 best_move = RobotAgent.best_move_towards(knowledge["disposal_zone_pos"], p["allowed_moves"])
                 if best_move:
-                    return {"type": "move", "to": best_move}
+                    return with_msgs({"type": "move", "to": best_move})
             
             # Otherwise, keep exploring east until we find it
-            return {"type": "move_east"}
+            return with_msgs({"type": "move_east"})
 
         # 2. Check if there is red waste on the CURRENT tile
         if p["cell_wastes"]["red"] > 0:
-            return {"type": "pickup", "waste": "red"}
+            return with_msgs({"type": "pickup", "waste": "red"})
 
         # 3. Pathfinding: Look for red waste in ADJACENT tiles
         if "adjacent_tiles" in p:
             for pos, tile_info in p["adjacent_tiles"].items():
                 if pos in p["allowed_moves"] and tile_info["wastes"]["red"] > 0:
-                    return {"type": "move", "to": pos}
+                    return with_msgs({"type": "move", "to": pos})
 
         # 4. Seek border & patrol: Move to the Z2/Z3 border and patrol vertically
         if inv["red"] < 1 and knowledge.get("patrol_border", True):
@@ -431,16 +498,16 @@ class RedAgent(RobotAgent):
                         at_pickup_border = True
 
             if at_pickup_border and p["allowed_moves"]:
-                return {"type": "move_vertical"}
+                return with_msgs({"type": "move_vertical"})
 
             # If we are not at the border yet, navigate towards it
             if p["zone"] == "z3" and p["allowed_moves"]:
-                return {"type": "move_west"}
+                return with_msgs({"type": "move_west"})
             elif p["zone"] in ("z1", "z2") and p["allowed_moves"]:
-                return {"type": "move_east"}
+                return with_msgs({"type": "move_east"})
 
         # 5. Move randomly if nothing else to do
         if p["allowed_moves"]:
-            return {"type": "move_random"}
+            return with_msgs({"type": "move_random"})
 
-        return {"type": "wait"}
+        return with_msgs({"type": "wait"})
