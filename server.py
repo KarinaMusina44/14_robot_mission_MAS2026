@@ -172,7 +172,11 @@ def _patched_robotmission_init(
     n_green_robots: int = 3,
     n_yellow_robots: int = 2,
     n_red_robots: int = 1,
+    vision: int = 1,
+    use_memory: bool = True,
+    patrol_border: bool = False,
     rng=None,
+    seed=None,
 ) -> None:
     _ORIGINAL_ROBOTMISSION_INIT(
         self,
@@ -183,7 +187,11 @@ def _patched_robotmission_init(
         n_green_robots=n_green_robots,
         n_yellow_robots=n_yellow_robots,
         n_red_robots=n_red_robots,
+        vision=vision,
+        use_memory=use_memory,
+        patrol_border=patrol_border,
         rng=rng,
+        seed=seed,
     )
     _ensure_remaining_weight_reporters(self)
     self._viz_completion_animation = True
@@ -364,19 +372,6 @@ model_params = {
     "seed": 42,
 }
 
-model = RobotMissionModel(
-    width=20,
-    height=10,
-    n_waste=32,
-    n_green_robots=3,
-    n_yellow_robots=2,
-    n_red_robots=1,
-    vision=2,
-    use_memory=True,
-    patrol_border=True,
-    seed=42,
-)
-
 space_component = make_space_component(
     agent_portrayal, post_process=post_process)
 waste_plot_component = make_plot_component(
@@ -391,7 +386,16 @@ waste_plot_component = make_plot_component(
 
 page = SolaraViz(
     RobotMissionModel(
-        width=20, height=10, n_waste=30, n_green_robots=3, n_yellow_robots=2, n_red_robots=1, rng=42
+        width=20,
+        height=10,
+        n_waste=32,
+        n_green_robots=3,
+        n_yellow_robots=2,
+        n_red_robots=1,
+        vision=2,
+        use_memory=True,
+        patrol_border=True,
+        seed=42,
     ),
     components=[space_component, waste_plot_component],
     model_params=model_params,

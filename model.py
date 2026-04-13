@@ -35,18 +35,19 @@ class RobotMissionModel(Model):
         use_memory: bool = True,
         patrol_border: bool = False,
         rng: Optional[Union[int, np.random.Generator]] = None,
+        seed: Optional[int] = None,
     ) -> None:
+        if rng is None and seed is not None:
+            rng = seed
         if isinstance(rng, int):
             rng = np.random.default_rng(rng)
         super().__init__(rng=rng)
         self.width = width
         self.height = height
         self.n_waste = max(0, int(n_waste))
+        self.n_waste = max(4, (self.n_waste // 4) * 4)
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
         self.running = True
-        self.steps = 0
-
-        n_waste = max(4, (n_waste // 4) * 4)
 
         self.radioactivity_agents: List[Radioactivity] = []
         self.waste_agents: List[Waste] = []
@@ -174,7 +175,9 @@ class RobotMissionModel(Model):
             for _ in range(n_robots):
                 robot_cls = self.random.choice(
                     [GreenAgent, YellowAgent, RedAgent])
-                self._spawn_one_robot(robot_cls)
+                self._spawn_one_robot(
+                    robot_cls, vision, use_memory, patrol_border
+                )
             return
 
         for _ in range(max(0, n_green_robots)):
@@ -184,13 +187,22 @@ class RobotMissionModel(Model):
         for _ in range(max(0, n_red_robots)):
             self._spawn_one_robot(RedAgent, vision, use_memory, patrol_border)
 
-    def _spawn_one_robot(self, robot_cls: type[RobotAgent]) -> None:
-        robot = robot_cls(model=self)
+    def _spawn_one_robot(
+        self,
+        robot_cls: type[RobotAgent],
+        vision: int,
+        use_memory: bool,
+        patrol_border: bool,
+    ) -> None:
+        robot = robot_cls(
+            model=self,
+            vision=vision,
+            use_memory=use_memory,
+            patrol_border=patrol_border,
+        )
         pos = self._random_position_in_zones(
-            robot.allowed_zones, avoid_robot_occupied=True)
-    def _spawn_one_robot(self, robot_cls: type[RobotAgent], vision: int, use_memory: bool, patrol_border: bool) -> None:
-        robot = robot_cls(model=self, vision=vision, use_memory=use_memory, patrol_border=patrol_border)
-        pos = self._random_position_in_zones(robot.allowed_zones, avoid_robot_occupied=True)
+            robot.allowed_zones, avoid_robot_occupied=True
+        )
         self.grid.place_agent(robot, pos)
         self.robot_agents.append(robot)
 
@@ -212,11 +224,16 @@ class RobotMissionModel(Model):
         return (0, 0)
 
     def step(self) -> None:
-        self.steps += 1
         robots = list(self.robot_agents)
         self.random.shuffle(robots)
         for robot in robots:
             robot.step()
+
+        if self.time_to_clear is None and self._report_system_waste_total() <= 0:
+            self.time_to_clear = float(getattr(self, "time", 0.0))
+            self.running = False
+
+        self.datacollector.collect(self)
 
     def do(self, agent: RobotAgent, action: Any) -> Dict[str, Any]:
         action_type = self._get_action_type(action)
@@ -270,28 +287,6 @@ class RobotMissionModel(Model):
                         agent, self.random.choice(fallback_moves))
                     action_success = True
 
-        elif action_type == "move_west":
-            west_moves = self._west_moves_for(agent)
-            if west_moves:
-                self.grid.move_agent(agent, self.random.choice(west_moves))
-                action_success = True
-            else:
-                fallback_moves = self._allowed_moves_for(agent)
-                if fallback_moves:
-                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
-                    action_success = True
-
-        elif action_type == "move_vertical":
-            vertical_moves = self._vertical_moves_for(agent)
-            if vertical_moves:
-                self.grid.move_agent(agent, self.random.choice(vertical_moves))
-                action_success = True
-            else:
-                fallback_moves = self._allowed_moves_for(agent)
-                if fallback_moves:
-                    self.grid.move_agent(agent, self.random.choice(fallback_moves))
-                    action_success = True
-
         elif action_type == "pickup":
             waste_type = self._action_get(action, "waste")
             if waste_type in {"green", "yellow", "red"} and self.remove_one_waste_at(
@@ -334,7 +329,13 @@ class RobotMissionModel(Model):
         elif action_type == "wait":
             action_success = True
 
-        if action_success and action_type in {"move", "move_random", "move_east"}:
+        if action_success and action_type in {
+            "move",
+            "move_random",
+            "move_east",
+            "move_west",
+            "move_vertical",
+        }:
             self.cumulative_moves += 1
             if isinstance(agent, GreenAgent):
                 self.cumulative_moves_green += 1
@@ -465,6 +466,20 @@ class RobotMissionModel(Model):
             }
         return data
 
+    def _visible_tiles_percepts(self, agent: RobotAgent) -> Dict[Position, Dict[str, Any]]:
+        data: Dict[Position, Dict[str, Any]] = {}
+        radius = max(1, int(getattr(agent, "vision", 1) or 1))
+        cells = self.grid.get_neighborhood(
+            agent.pos, moore=True, include_center=False, radius=radius
+        )
+        for pos in cells:
+            data[pos] = {
+                "zone": self._zone_for_x(pos[0]),
+                "is_disposal_zone": self._is_disposal_cell(pos),
+                "wastes": self._cell_wastes(pos),
+            }
+        return data
+
     def _build_percepts(self, agent: RobotAgent, action_success: bool) -> Dict[str, Any]:
         next_zone = getattr(agent, "next_zone_for_drop", None)
         frontier_to_next_zone = False
@@ -480,7 +495,9 @@ class RobotMissionModel(Model):
             "cell_wastes": self._cell_wastes(agent.pos), # type: ignore
             "allowed_moves": self._allowed_moves_for(agent),
             "in_disposal_zone": self._is_disposal_cell(agent.pos), # type: ignore
+            "frontier_to_next_zone_for_drop": frontier_to_next_zone,
             "frontier_to_next_zone": frontier_to_next_zone,
+            "visible_tiles": self._visible_tiles_percepts(agent),
             "inventory": dict(self._get_inventory(agent)),
             "adjacent_tiles": self._adjacent_tiles_percepts(agent),
             "action_success": action_success,
