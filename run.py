@@ -30,7 +30,7 @@ def _build_model_kwargs(args: argparse.Namespace, model_cls: type) -> Dict[str, 
         "n_red_robots": args.n_red_robots,
         "n_green_wastes": requested_waste,
         "n_waste": requested_waste,
-        "seed": args.seed,
+        "rng": args.seed,
         "verbose": args.verbose,
     }
 

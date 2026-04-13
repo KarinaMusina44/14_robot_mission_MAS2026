@@ -36,6 +36,7 @@ To run the simulation in the terminal and output the step-by-step metrics (usefu
 python run.py --steps 100 --n-waste 30 --verbose
 ```
 
+
 ---
 
 ## 3. Theoretical Framework & M&S Scope
