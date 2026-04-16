@@ -306,11 +306,7 @@ class RobotMissionModel(Model):
 
         elif action_type == "drop":
             waste_type = self._action_get(action, "waste")
-            if (
-                waste_type in inventory
-                and inventory[waste_type] > 0
-                and self._is_drop_feasible(agent)
-            ):
+            if waste_type in inventory and inventory[waste_type] > 0:
                 inventory[waste_type] -= 1
                 self.add_one_waste_at(agent.pos, waste_type) # type: ignore
                 action_success = True
