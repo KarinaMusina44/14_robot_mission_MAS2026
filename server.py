@@ -175,6 +175,8 @@ def _patched_robotmission_init(
     vision: int = 1,
     use_memory: bool = True,
     patrol_border: bool = False,
+    use_communication: bool = True,
+    multiple_wastes: bool = False,
     rng=None,
     seed=None,
 ) -> None:
@@ -190,6 +192,8 @@ def _patched_robotmission_init(
         vision=vision,
         use_memory=use_memory,
         patrol_border=patrol_border,
+        use_communication=use_communication,
+        multiple_wastes=multiple_wastes,
         rng=rng,
         seed=seed,
     )
@@ -369,6 +373,8 @@ model_params = {
     "vision":         {"type": "SliderInt", "value": 2,   "label": "Robot Vision Radius", "min": 1, "max": 5, "step": 1},
     "use_memory":     {"type": "Checkbox",  "value": True, "label": "Use Red Robot Memory"},
     "patrol_border":  {"type": "Checkbox",  "value": True, "label": "Enable Border Patrol"},
+    "use_communication": {"type": "Checkbox",  "value": True, "label": "Enable Robot Communication"},
+    "multiple_wastes": {"type": "Checkbox",  "value": False, "label": "Use Multiple Waste Types"},
     "seed": 42,
 }
 
@@ -395,6 +401,8 @@ page = SolaraViz(
         vision=2,
         use_memory=True,
         patrol_border=True,
+        use_communication=True,
+        multiple_wastes=False,
         seed=42,
     ),
     components=[space_component, waste_plot_component],

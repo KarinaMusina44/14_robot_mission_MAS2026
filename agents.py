@@ -16,7 +16,7 @@ class RobotAgent(Agent):
     prev_zone = None
     robot_color = "unknown"
 
-    def __init__(self, model, vision=2, use_memory=True, patrol_border=True):
+    def __init__(self, model, vision=2, use_memory=True, patrol_border=True, use_communication=True):
         super().__init__(model)
         self.vision = vision
         self.type = self.__class__.robot_color
@@ -30,6 +30,7 @@ class RobotAgent(Agent):
             "use_memory": use_memory,
             "patrol_border": patrol_border,
             "inbox": [],
+            "use_communication": use_communication,
         }
 
     def zone_of_cell(self, pos):
@@ -257,7 +258,7 @@ class RobotAgent(Agent):
         self.update_knowledge(percepts)
         action = self.deliberate(self.knowledge)
 
-        if "messages" in action:
+        if "messages" in action and self.knowledge.get("use_communication", True):
             for msg in action["messages"]:
                 for other_agent in self.model.robot_agents:
                     if other_agent is not self and other_agent.type == msg["to"]:
@@ -337,15 +338,21 @@ class GreenAgent(RobotAgent):
 
         # 3. Negotiation: If we are holding one and see another, yield to the peer with the lower ID
         if inv["green"] == 1:
-            if yield_to_peer:
-                messages_to_send.append({"to": "green", "topic": "dropped_waste", "data": p["position"]})
-                knowledge["frustration"] = 0
-                knowledge["yielded_wastes"].add(p["position"])
-                return with_msgs({"type": "drop", "waste": "green"})
-            elif not knowledge.get("known_wastes"):
+            if not knowledge.get("use_communication", True):
                 knowledge["frustration"] = knowledge.get("frustration", 0) + 1
-                if knowledge["frustration"] % 10 == 0:
-                    messages_to_send.append({"to": "green", "topic": "holding_one", "data": {"id": p["id"], "pos": p["position"]}})
+                if knowledge["frustration"] > 20:
+                    knowledge["frustration"] = 0
+                    return with_msgs({"type": "drop", "waste": "green"})
+            else:
+                if yield_to_peer:
+                    messages_to_send.append({"to": "green", "topic": "dropped_waste", "data": p["position"]})
+                    knowledge["frustration"] = 0
+                    knowledge["yielded_wastes"].add(p["position"])
+                    return with_msgs({"type": "drop", "waste": "green"})
+                elif not knowledge.get("known_wastes"):
+                    knowledge["frustration"] = knowledge.get("frustration", 0) + 1
+                    if knowledge["frustration"] % 10 == 0:
+                        messages_to_send.append({"to": "green", "topic": "holding_one", "data": {"id": p["id"], "pos": p["position"]}})
         else:
             knowledge["frustration"] = 0
 
@@ -436,15 +443,21 @@ class YellowAgent(RobotAgent):
 
         # 3. Handle holding exactly 1 yellow waste
         if inv["yellow"] == 1:
-            if yield_to_peer:
-                messages_to_send.append({"to": "yellow", "topic": "dropped_waste", "data": p["position"]})
-                knowledge["frustration"] = 0
-                knowledge["yielded_wastes"].add(p["position"])
-                return with_msgs({"type": "drop", "waste": "yellow"})
-            elif not knowledge.get("known_wastes"):
+            if not knowledge.get("use_communication", True):
                 knowledge["frustration"] = knowledge.get("frustration", 0) + 1
-                if knowledge["frustration"] % 10 == 0:
-                    messages_to_send.append({"to": "yellow", "topic": "holding_one", "data": {"id": p["id"], "pos": p["position"]}})
+                if knowledge["frustration"] > 20:
+                    knowledge["frustration"] = 0
+                    return with_msgs({"type": "drop", "waste": "yellow"})
+            else:
+                if yield_to_peer:
+                    messages_to_send.append({"to": "yellow", "topic": "dropped_waste", "data": p["position"]})
+                    knowledge["frustration"] = 0
+                    knowledge["yielded_wastes"].add(p["position"])
+                    return with_msgs({"type": "drop", "waste": "yellow"})
+                elif not knowledge.get("known_wastes"):
+                    knowledge["frustration"] = knowledge.get("frustration", 0) + 1
+                    if knowledge["frustration"] % 10 == 0:
+                        messages_to_send.append({"to": "yellow", "topic": "holding_one", "data": {"id": p["id"], "pos": p["position"]}})
         else:
             knowledge["frustration"] = 0
 
@@ -540,7 +553,7 @@ class RedAgent(RobotAgent):
 
         # Share discovery with peers
         messages_to_send = []
-        if "disposal_zone_pos" in knowledge and not knowledge.get("has_broadcasted_disposal"):
+        if knowledge.get("use_communication", True) and "disposal_zone_pos" in knowledge and not knowledge.get("has_broadcasted_disposal"):
             messages_to_send.append({
                 "to": "red",
                 "topic": "disposal_zone",

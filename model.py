@@ -34,6 +34,8 @@ class RobotMissionModel(Model):
         vision: int = 1,
         use_memory: bool = True,
         patrol_border: bool = False,
+        use_communication: bool = True,
+        multiple_wastes: bool = False,
         rng: Optional[Union[int, np.random.Generator]] = None,
         seed: Optional[int] = None,
     ) -> None:
@@ -44,18 +46,21 @@ class RobotMissionModel(Model):
         super().__init__(rng=rng)
         self.width = width
         self.height = height
-        self.n_waste = max(0, int(n_waste))
-        self.n_waste = max(4, (self.n_waste // 4) * 4)
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
         self.running = True
+
+        self.vision = vision
+        self.use_memory = use_memory
+        self.patrol_border = patrol_border
+        self.use_communication = use_communication
+        self.multiple_wastes = multiple_wastes
 
         self.radioactivity_agents: List[Radioactivity] = []
         self.waste_agents: List[Waste] = []
         self.robot_agents: List[RobotAgent] = []
         self.waste_disposal_zone: Optional[WasteDisposalZone] = None
         self.waste_disposal_pos: Optional[Position] = None
-        self.disposed_counts: Dict[str, int] = {
-            "green": 0, "yellow": 0, "red": 0}
+        self.disposed_counts: Dict[str, int] = {"green": 0, "yellow": 0, "red": 0}
         self.cumulative_moves: int = 0
         self.cumulative_moves_green: int = 0
         self.cumulative_moves_yellow: int = 0
@@ -64,15 +69,12 @@ class RobotMissionModel(Model):
 
         self._init_radioactivity_field()
         self._init_waste_disposal_zone()
-        self._init_waste(self.n_waste)
+        self._init_waste(n_waste)
         self._init_robots(
             n_robots=n_robots,
             n_green_robots=n_green_robots,
             n_yellow_robots=n_yellow_robots,
             n_red_robots=n_red_robots,
-            vision=vision,
-            use_memory=use_memory,
-            patrol_border=patrol_border,
         )
         self._init_datacollector()
         self.datacollector.collect(self)
@@ -153,13 +155,39 @@ class RobotMissionModel(Model):
         self.waste_disposal_pos = (x, y)
 
     def _init_waste(self, n_waste: int) -> None:
-        # Step 1 starts with initial green waste in z1.
-        for _ in range(max(0, n_waste)):
-            x = int(self.rng.integers(0, max(1, self.width // 3)))
+        # Distribute wastes safely to avoid mathematical deadlocks:
+        # Green must be a multiple of 4, Yellow a multiple of 2.
+        if self.multiple_wastes:
+            n_green = max(4, int(n_waste * 0.6) // 4 * 4)
+            n_yellow = max(2, int(n_waste * 0.3) // 2 * 2)
+            n_red = max(1, n_waste - n_green - n_yellow)
+        else:
+            n_green = max(4, n_waste // 4 * 4)
+            n_yellow = 0
+            n_red = 0
+
+        z1_max = max(1, int(self.width / 3.0))
+        z2_max = max(z1_max + 1, int(self.width * 2 / 3.0))
+        z3_max = max(z2_max + 1, self.width - 1)
+
+        # Spawn Green (many, in Z1)
+        for _ in range(n_green):
+            x = int(self.rng.integers(0, z1_max))
             y = int(self.rng.integers(0, self.height))
-            obj = Waste(model=self, waste_type="green")
-            self.grid.place_agent(obj, (x, y))
-            self.waste_agents.append(obj)
+            self.add_one_waste_at((x, y), "green")
+
+        # Spawn Yellow (some, in Z2)
+        for _ in range(n_yellow):
+            x = int(self.rng.integers(z1_max, z2_max))
+            y = int(self.rng.integers(0, self.height))
+            self.add_one_waste_at((x, y), "yellow")
+
+        # Spawn Red (a few, in Z3)
+        for _ in range(n_red):
+            x = int(self.rng.integers(z2_max, z3_max))
+            y = int(self.rng.integers(0, self.height))
+            self.add_one_waste_at((x, y), "red")
+
 
     def _init_robots(
         self,
@@ -167,38 +195,31 @@ class RobotMissionModel(Model):
         n_green_robots: int,
         n_yellow_robots: int,
         n_red_robots: int,
-        vision: int = 1,
-        use_memory: bool = True,
-        patrol_border: bool = False,
     ) -> None:
         if n_robots > 0 and (n_green_robots + n_yellow_robots + n_red_robots) == 0:
             for _ in range(n_robots):
                 robot_cls = self.random.choice(
                     [GreenAgent, YellowAgent, RedAgent])
-                self._spawn_one_robot(
-                    robot_cls, vision, use_memory, patrol_border
-                )
+                self._spawn_one_robot(robot_cls)
             return
 
         for _ in range(max(0, n_green_robots)):
-            self._spawn_one_robot(GreenAgent, vision, use_memory, patrol_border)
+            self._spawn_one_robot(GreenAgent)
         for _ in range(max(0, n_yellow_robots)):
-            self._spawn_one_robot(YellowAgent, vision, use_memory, patrol_border)
+            self._spawn_one_robot(YellowAgent)
         for _ in range(max(0, n_red_robots)):
-            self._spawn_one_robot(RedAgent, vision, use_memory, patrol_border)
+            self._spawn_one_robot(RedAgent)
 
     def _spawn_one_robot(
         self,
         robot_cls: type[RobotAgent],
-        vision: int,
-        use_memory: bool,
-        patrol_border: bool,
     ) -> None:
         robot = robot_cls(
             model=self,
-            vision=vision,
-            use_memory=use_memory,
-            patrol_border=patrol_border,
+            vision=self.vision,
+            use_memory=self.use_memory,
+            patrol_border=self.patrol_border,
+            use_communication=self.use_communication,
         )
         pos = self._random_position_in_zones(
             robot.allowed_zones, avoid_robot_occupied=True
