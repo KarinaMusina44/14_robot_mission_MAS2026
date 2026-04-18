@@ -16,7 +16,7 @@ class RobotAgent(Agent):
     prev_zone = None
     robot_color = "unknown"
 
-    def __init__(self, model, vision=2, use_memory=True, patrol_border=True, use_communication=True):
+    def __init__(self, model, vision=2, use_memory=True, patrol_border=True, use_communication=True, log_messages=True):
         super().__init__(model)
         self.vision = vision
         self.type = self.__class__.robot_color
@@ -31,6 +31,7 @@ class RobotAgent(Agent):
             "patrol_border": patrol_border,
             "inbox": [],
             "use_communication": use_communication,
+            "log_messages": log_messages,
         }
 
     def zone_of_cell(self, pos):
@@ -264,8 +265,9 @@ class RobotAgent(Agent):
                     if other_agent is not self and other_agent.type == msg["to"]:
                         other_agent.knowledge["inbox"].append(msg)
 
-                        step = getattr(self.model, "steps", "?")
-                        print(f"[Step {step}] {self.type.capitalize()} Agent {self.unique_id} -> {other_agent.type.capitalize()} Agent {other_agent.unique_id} | Topic: '{msg['topic']}' | Data: {msg['data']}")
+                        if self.knowledge.get("log_messages", True):
+                            step = getattr(self.model, "steps", "?")
+                            print(f"[Step {step}] {self.type.capitalize()} Agent {self.unique_id} -> {other_agent.type.capitalize()} Agent {other_agent.unique_id} | Topic: '{msg['topic']}' | Data: {msg['data']}")
 
         model_percepts = self.do(action)
         new_percepts = self.percepts()

@@ -1,3 +1,9 @@
+"""
+Group: 14
+Date: 20 March 2026
+Members: Deodato V. Bastos Neto, Karina Musina
+"""
+
 import matplotlib.patches as patches
 from mesa.visualization import SolaraViz, make_plot_component, make_space_component
 from mesa.visualization.components import AgentPortrayalStyle
