@@ -610,6 +610,8 @@ class GreenAgent(RobotAgent):
         if p["allowed_moves"]:
             return with_msgs({"type": "move_random"})
         return with_msgs({"type": "wait"})
+
+
 class YellowAgent(RobotAgent):
     """z1-z2, pick yellow, transform 2 yellow -> 1 red, then carry east."""
 
