@@ -42,7 +42,6 @@ class RobotAgent(Agent):
             "patrol_border": patrol_border,
             "inbox": [],
             "use_communication": use_communication,
-            "log_messages": log_messages,
         }
 
     def zone_of_cell(self, pos):
@@ -308,15 +307,6 @@ class RobotAgent(Agent):
                     delivered.append(other_agent)
                 if delivered and hasattr(self.model, "log_communication_event"):
                     self.model.log_communication_event(self, msg, delivered)
-
-                if delivered and self.knowledge.get("log_messages", True):
-                    step = getattr(self.model, "steps", "?")
-                    for recipient in delivered:
-                        print(
-                            f"[Step {step}] {self.type.capitalize()} Agent {self.unique_id} -> "
-                            f"{recipient.type.capitalize()} Agent {recipient.unique_id} | "
-                            f"Topic: '{msg['topic']}' | Data: {msg['data']}"
-                        )
 
         model_percepts = self.do(action)
         new_percepts = self.percepts()
