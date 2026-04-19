@@ -1,3 +1,9 @@
+"""
+Group: 14
+Date: 3 April 2026
+Members: Deodato V. Bastos Neto, Karina Musina
+"""
+
 from __future__ import annotations
 from model import RobotMissionModel
 from mesa.batchrunner import batch_run
@@ -7,7 +13,7 @@ import matplotlib.pyplot as plt
 import argparse
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Any
 import math
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
@@ -22,6 +28,23 @@ def _parse_int_list(raw: str) -> List[int]:
         values.append(int(token))
     if not values:
         raise ValueError("Expected at least one integer value.")
+    return values
+
+
+def _parse_bool_list(raw: str) -> List[bool]:
+    values: List[bool] = []
+    for token in raw.split(","):
+        token = token.strip().lower()
+        if not token:
+            continue
+        if token in ("true", "t", "1", "yes", "y"):
+            values.append(True)
+        elif token in ("false", "f", "0", "no", "n"):
+            values.append(False)
+        else:
+            raise ValueError(f"Invalid boolean value: {token}")
+    if not values:
+        raise ValueError("Expected at least one boolean value.")
     return values
 
 
@@ -43,13 +66,13 @@ def _parse_vision_values(raw: str) -> List[int]:
     return values
 
 
-def _pick_reference_value(values: list[int]) -> int:
+def _pick_reference_value(values: list[Any]) -> Any:
     unique_sorted = sorted(set(values))
     return unique_sorted[len(unique_sorted) // 2]
 
 
 def _filter_by_fixed_values(
-    completion_df: pd.DataFrame, fixed_values: dict[str, int]
+    completion_df: pd.DataFrame, fixed_values: dict[str, Any]
 ) -> pd.DataFrame:
     filtered = completion_df
     for col, value in fixed_values.items():
@@ -57,20 +80,24 @@ def _filter_by_fixed_values(
     return filtered
 
 
-def _fixed_values_label(fixed_values: dict[str, int]) -> str:
+def _fixed_values_label(fixed_values: dict[str, Any]) -> str:
     display_names = {
         "n_green_robots": "green",
         "n_red_robots": "red",
         "n_yellow_robots": "yellow",
         "n_waste": "waste",
         "vision": "vision",
+        "use_memory": "memory",
+        "patrol_border": "patrol",
+        "use_communication": "comm",
+        "multiple_wastes": "multi_waste"
     }
     parts = [f"{display_names.get(col, col)}={value}" for col, value in fixed_values.items()]
     return ", ".join(parts)
 
 
 def _aggregate_time_by_agent_count(
-    completion_df: pd.DataFrame, count_col: str, fixed_values: dict[str, int]
+    completion_df: pd.DataFrame, count_col: str, fixed_values: dict[str, Any]
 ) -> pd.DataFrame:
     filtered = _filter_by_fixed_values(completion_df, fixed_values=fixed_values)
     completed = filtered.loc[
@@ -103,7 +130,7 @@ def _save_time_vs_agent_count_plot(
     completion_df: pd.DataFrame,
     count_col: str,
     x_label: str,
-    fixed_values: dict[str, int],
+    fixed_values: dict[str, Any],
     line_color: str,
     fill_color: str,
     plot_path: Path,
@@ -145,6 +172,33 @@ def _save_time_vs_agent_count_plot(
     plt.close(fig)
 
 
+def _save_time_vs_bool_plot(
+    completion_df: pd.DataFrame,
+    bool_col: str,
+    fixed_values: dict[str, Any],
+    plot_path: Path,
+) -> None:
+    agg = _aggregate_time_by_agent_count(
+        completion_df, count_col=bool_col, fixed_values=fixed_values
+    )
+    if agg.empty or len(agg) < 2:
+        return
+
+    x = [str(val) for val in agg[bool_col]]
+    y = agg["mean_time_to_clear"].astype(float).tolist()
+    std = agg["std_time_to_clear"].fillna(0.0).astype(float).tolist()
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.bar(x, y, yerr=std, capsize=5, color=["#E63946", "#2A9D8F"][:len(x)], alpha=0.9)
+    ax.set_xlabel(bool_col)
+    ax.set_ylabel("mean_time_to_clear_all_waste")
+    ax.set_title(f"Time-to-Clear vs {bool_col}\nfixed: {_fixed_values_label(fixed_values)}")
+    ax.grid(axis='y', alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(plot_path, dpi=150)
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run batch experiments and compute time to clear all wastes."
@@ -178,7 +232,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--vision",
         type=str,
-        default="1",
+        default="2",
         help="Comma-separated values for robot vision radius.",
     )
     parser.add_argument(
@@ -207,6 +261,30 @@ def parse_args() -> argparse.Namespace:
         help="Disable communication logs in the terminal.",
     )
     parser.set_defaults(log_communications=False)
+    parser.add_argument(
+        "--use-memory",
+        type=str,
+        default="True",
+        help="Comma-separated boolean values (True/False) for Red Robot Memory.",
+    )
+    parser.add_argument(
+        "--patrol-border",
+        type=str,
+        default="True",
+        help="Comma-separated boolean values (True/False) for Border Patrol.",
+    )
+    parser.add_argument(
+        "--use-communication",
+        type=str,
+        default="True",
+        help="Comma-separated boolean values (True/False) for Robot Communication.",
+    )
+    parser.add_argument(
+        "--multiple-wastes",
+        type=str,
+        default="False",
+        help="Comma-separated boolean values (True/False) for Multiple Wastes initialization.",
+    )
     parser.add_argument(
         "--iterations",
         type=int,
@@ -252,6 +330,11 @@ def parse_args() -> argparse.Namespace:
         "--no-plots",
         action="store_true",
         help="Disable plot generation.",
+    )
+    parser.add_argument(
+        "--no-log-messages",
+        action="store_true",
+        help="Disable agent message logging in the terminal.",
     )
     return parser.parse_args()
 
@@ -304,6 +387,11 @@ def main() -> int:
         "vision": _parse_vision_values(args.vision),
         "green_coordination": [args.green_coordination],
         "log_communications": [args.log_communications],
+        "use_memory": _parse_bool_list(args.use_memory),
+        "patrol_border": _parse_bool_list(args.patrol_border),
+        "use_communication": _parse_bool_list(args.use_communication),
+        "multiple_wastes": _parse_bool_list(args.multiple_wastes),
+        "log_messages": [not args.no_log_messages],
     }
     seed_values = [args.seed_start + i for i in range(max(1, args.iterations))]
 
@@ -352,6 +440,10 @@ def main() -> int:
         "vision",
         "green_coordination",
         "log_communications",
+        "use_memory",
+        "patrol_border",
+        "use_communication",
+        "multiple_wastes",
     ]
     completion_df = _extract_completion_per_run(
         df=df,
@@ -383,14 +475,19 @@ def main() -> int:
         print("Plot generation disabled (--no-plots).")
         return 0
 
+    # For multi-variable plots, use the first specified parameter as the reference 'fixed' anchor
     reference_values = {
         "n_green_robots": _pick_reference_value(parameters["n_green_robots"]),
         "n_red_robots": _pick_reference_value(parameters["n_red_robots"]),
         "n_yellow_robots": _pick_reference_value(parameters["n_yellow_robots"]),
         "n_waste": _pick_reference_value(parameters["n_waste"]),
         "vision": _pick_reference_value(parameters["vision"]),
+        "use_memory": parameters["use_memory"][0],
+        "patrol_border": parameters["patrol_border"][0],
+        "use_communication": parameters["use_communication"][0],
+        "multiple_wastes": parameters["multiple_wastes"][0],
     }
-    print(f"Fixed reference values (median): {reference_values}")
+    print(f"Fixed reference values (anchors): {reference_values}")
 
     per_color_specs = [
         (
@@ -430,6 +527,7 @@ def main() -> int:
         ),
     ]
 
+    # Generate quantitative line plots
     for count_col, x_label, line_color, fill_color, plot_path in per_color_specs:
         fixed_values = {
             col: value for col, value in reference_values.items() if col != count_col
@@ -445,8 +543,21 @@ def main() -> int:
         )
         if plot_path.exists():
             print(f"Saved plot: {plot_path}")
-        else:
-            print(f"No completed runs: skipped {count_col} plot.")
+
+    # Generate categorical bar plots for boolean toggles
+    bool_cols = ["use_memory", "patrol_border", "use_communication", "multiple_wastes"]
+    for col in bool_cols:
+        if len(set(parameters[col])) > 1:  # Only plot if we passed multiple bool values
+            fixed_values = {k: v for k, v in reference_values.items() if k != col}
+            plot_path = outdir / f"plot_time_to_clear_vs_{col}.png"
+            _save_time_vs_bool_plot(
+                completion_df=completion_df,
+                bool_col=col,
+                fixed_values=fixed_values,
+                plot_path=plot_path
+            )
+            if plot_path.exists():
+                print(f"Saved boolean comparison plot: {plot_path}")
 
     return 0
 

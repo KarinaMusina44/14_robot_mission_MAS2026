@@ -1,3 +1,9 @@
+"""
+Group: 14
+Date: 20 March 2026
+Members: Deodato V. Bastos Neto, Karina Musina
+"""
+
 import matplotlib.patches as patches
 from mesa.visualization import SolaraViz, make_plot_component, make_space_component
 from mesa.visualization.components import AgentPortrayalStyle
@@ -212,6 +218,8 @@ def _patched_robotmission_init(
     log_communications: bool = False,
     use_memory: bool = True,
     patrol_border: bool = False,
+    use_communication: bool = True,
+    multiple_wastes: bool = False,
     rng=None,
     seed=None,
 ) -> None:
@@ -229,6 +237,8 @@ def _patched_robotmission_init(
         log_communications=log_communications,
         use_memory=use_memory,
         patrol_border=patrol_border,
+        use_communication=use_communication,
+        multiple_wastes=multiple_wastes,
         rng=rng,
         seed=seed,
     )
@@ -446,6 +456,8 @@ model_params = {
     "log_communications": {"type": "Checkbox", "value": False, "label": "Log Communications in Terminal"},
     "use_memory":     {"type": "Checkbox",  "value": True, "label": "Use Red Robot Memory"},
     "patrol_border":  {"type": "Checkbox",  "value": True, "label": "Enable Border Patrol"},
+    "use_communication": {"type": "Checkbox",  "value": True, "label": "Enable Robot Communication"},
+    "multiple_wastes": {"type": "Checkbox",  "value": False, "label": "Use Multiple Waste Types"},
     "seed": 42,
 }
 
@@ -474,6 +486,8 @@ page = SolaraViz(
         log_communications=False,
         use_memory=True,
         patrol_border=True,
+        use_communication=True,
+        multiple_wastes=False,
         seed=42,
     ),
     components=[space_component, waste_plot_component],

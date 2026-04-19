@@ -5,6 +5,7 @@ Members: Deodato V. Bastos Neto, Karina Musina
 """
 
 import random
+from matplotlib.pylab import inv
 from mesa import Agent
 
 class RobotAgent(Agent):
@@ -22,6 +23,8 @@ class RobotAgent(Agent):
         green_coordination=False,
         use_memory=True,
         patrol_border=True,
+        use_communication=True,
+        log_messages=True,
     ):
         super().__init__(model)
         self.vision = vision
@@ -38,6 +41,8 @@ class RobotAgent(Agent):
             "use_memory": use_memory,
             "patrol_border": patrol_border,
             "inbox": [],
+            "use_communication": use_communication,
+            "log_messages": log_messages,
         }
 
     def zone_of_cell(self, pos):
@@ -149,6 +154,7 @@ class RobotAgent(Agent):
             frontier_to_next_zone_for_drop = self.has_east_neighbor_in_zone(self.next_zone_for_drop)
 
         return {
+            "id": self.unique_id,
             "position": self.pos,
             "zone": self.zone_of_cell(self.pos),
             "cell_wastes": self.cell_wastes(),
@@ -182,15 +188,21 @@ class RobotAgent(Agent):
         """Helper to step towards a distant target."""
         if target in allowed_moves:
             return target
-        best_move = None
+
+        best_moves = []
         best_dist = float('inf')
         for m in allowed_moves:
-            # Manhattan distance
             dist = abs(m[0] - target[0]) + abs(m[1] - target[1])
             if dist < best_dist:
                 best_dist = dist
-                best_move = m
-        return best_move
+                best_moves = [m]
+            elif dist == best_dist:
+                best_moves.append(m)
+
+        # Pick randomly among equal-distance best moves to prevent oscillating
+        if best_moves:
+            return random.choice(best_moves)
+        return None
 
     def move_random(self, possible_moves):
         if not possible_moves:
@@ -277,7 +289,7 @@ class RobotAgent(Agent):
         self.update_knowledge(percepts)
         action = self.deliberate(self.knowledge)
 
-        if "messages" in action:
+        if "messages" in action and self.knowledge.get("use_communication", True):
             for msg in action["messages"]:
                 recipients = msg.get("recipients")
                 recipients_set = set(recipients) if isinstance(recipients, list) else None
@@ -296,6 +308,15 @@ class RobotAgent(Agent):
                     delivered.append(other_agent)
                 if delivered and hasattr(self.model, "log_communication_event"):
                     self.model.log_communication_event(self, msg, delivered)
+
+                if delivered and self.knowledge.get("log_messages", True):
+                    step = getattr(self.model, "steps", "?")
+                    for recipient in delivered:
+                        print(
+                            f"[Step {step}] {self.type.capitalize()} Agent {self.unique_id} -> "
+                            f"{recipient.type.capitalize()} Agent {recipient.unique_id} | "
+                            f"Topic: '{msg['topic']}' | Data: {msg['data']}"
+                        )
 
         model_percepts = self.do(action)
         new_percepts = self.percepts()
@@ -384,62 +405,119 @@ class GreenAgent(RobotAgent):
                 action_dict["messages"] = existing_messages + messages_to_send
             return action_dict
 
+        knowledge.setdefault("known_wastes", set())
+        knowledge.setdefault("yielded_wastes", set())
+        yield_to_peer = False
+
         peer_claims = {}
         peer_states = {}
         known_peer_ids = {peer["id"] for peer in visible_green_peers}
-        for msg in knowledge.get("inbox", []):
+        inbox_messages = list(knowledge.get("inbox", []))
+
+        for msg in inbox_messages:
             sender_id = msg.get("from_id")
-            if sender_id not in known_peer_ids:
-                continue
             topic = msg.get("topic")
             data = msg.get("data")
-            if not isinstance(data, dict):
-                continue
 
-            sender_pos = data.get("sender_pos")
-            if not isinstance(sender_pos, (list, tuple)) or len(sender_pos) != 2:
-                continue
-            sender_pos = tuple(sender_pos)
+            if sender_id in known_peer_ids and isinstance(data, dict):
+                sender_pos = data.get("sender_pos")
+                if isinstance(sender_pos, (list, tuple)) and len(sender_pos) == 2:
+                    sender_pos = tuple(sender_pos)
 
-            if topic == "green_visible_targets":
-                raw_targets = data.get("targets", [])
-                targets = set()
-                if isinstance(raw_targets, list):
-                    for target in raw_targets:
-                        if isinstance(target, (list, tuple)) and len(target) == 2:
-                            targets.add(tuple(target))
-                peer_claims[sender_id] = {
-                    "pos": sender_pos,
-                    "targets": targets,
-                }
-            elif topic == "green_state":
-                peer_states[sender_id] = {
-                    "pos": sender_pos,
-                    "inv_green": int(data.get("inv_green", 0) or 0),
-                    "inv_yellow": int(data.get("inv_yellow", 0) or 0),
-                }
+                    if topic == "green_visible_targets":
+                        raw_targets = data.get("targets", [])
+                        targets = set()
+                        if isinstance(raw_targets, list):
+                            for target in raw_targets:
+                                if isinstance(target, (list, tuple)) and len(target) == 2:
+                                    targets.add(tuple(target))
+                        peer_claims[sender_id] = {
+                            "pos": sender_pos,
+                            "targets": targets,
+                        }
+                    elif topic == "green_state":
+                        peer_states[sender_id] = {
+                            "pos": sender_pos,
+                            "inv_green": int(data.get("inv_green", 0) or 0),
+                            "inv_yellow": int(data.get("inv_yellow", 0) or 0),
+                        }
+
+            if topic == "dropped_waste" and isinstance(data, (list, tuple)) and len(data) == 2:
+                knowledge["known_wastes"].add(tuple(data))
+            elif topic == "holding_one" and isinstance(data, dict):
+                peer_id = data.get("id")
+                if inv["green"] == 1 and peer_id is not None:
+                    try:
+                        if p["id"] < peer_id:
+                            yield_to_peer = True
+                    except TypeError:
+                        if str(p["id"]) < str(peer_id):
+                            yield_to_peer = True
+
         knowledge["inbox"] = []
 
-        # 1. Check if we can transform
+        # Memory pruning: Remove green wastes from memory if they are no longer there.
+        to_remove = set()
+        for kw in knowledge["known_wastes"]:
+            if kw == p["position"] and p["cell_wastes"]["green"] == 0:
+                to_remove.add(kw)
+        knowledge["known_wastes"] -= to_remove
+
+        to_remove_yielded = set()
+        for yw in knowledge["yielded_wastes"]:
+            if (yw == p["position"] and p["cell_wastes"]["green"] == 0) or (
+                yw in vis and vis[yw]["wastes"]["green"] == 0
+            ):
+                to_remove_yielded.add(yw)
+        knowledge["yielded_wastes"] -= to_remove_yielded
+
+        # 1. Check if we can transform.
         if inv["green"] >= 2:
             return with_msgs({"type": "transform", "from": "green", "to": "yellow", "count": 2})
 
-        # 2. Check if we have yellow waste to move/drop
+        # 2. Check if we have yellow waste to move/drop.
         if inv["yellow"] >= 1:
             if p["frontier_to_next_zone_for_drop"]:
-                return with_msgs({
-                        "type": "drop", 
-                        "waste": "yellow",
-                        "messages": [{"to": "yellow", "topic": "dropped_waste", "data": p["position"]}]
-                    })
+                messages_to_send.append({"to": "yellow", "topic": "dropped_waste", "data": p["position"]})
+                return with_msgs({"type": "drop", "waste": "yellow"})
             return with_msgs({"type": "move_east"})
 
-        # 3. Check if there is green waste on the CURRENT tile
-        if p["cell_wastes"]["green"] > 0:
+        # 3. Negotiation: If we are holding one and see another, yield to the peer with the lower ID.
+        if inv["green"] == 1:
+            if not knowledge.get("use_communication", True):
+                knowledge["frustration"] = knowledge.get("frustration", 0) + 1
+                if knowledge["frustration"] > 20:
+                    knowledge["frustration"] = 0
+                    return with_msgs({"type": "drop", "waste": "green"})
+            else:
+                if yield_to_peer:
+                    messages_to_send.append({"to": "green", "topic": "dropped_waste", "data": p["position"]})
+                    knowledge["frustration"] = 0
+                    knowledge["yielded_wastes"].add(p["position"])
+                    return with_msgs({"type": "drop", "waste": "green"})
+                elif not knowledge.get("known_wastes"):
+                    knowledge["frustration"] = knowledge.get("frustration", 0) + 1
+                    if knowledge["frustration"] % 10 == 0:
+                        messages_to_send.append(
+                            {
+                                "to": "green",
+                                "topic": "holding_one",
+                                "data": {"id": p["id"], "pos": p["position"]},
+                            }
+                        )
+        else:
+            knowledge["frustration"] = 0
+
+        # 4. Check if there is green waste on the current tile.
+        if p["cell_wastes"]["green"] > 0 and p["position"] not in knowledge["yielded_wastes"]:
             return with_msgs({"type": "pickup", "waste": "green"})
 
-        # 4. Pathfinding (Extended Vision)
-        targets = [pos for pos, info in vis.items() if info["wastes"]["green"] > 0]
+        # 5. Pathfinding (extended vision).
+        targets = [
+            pos
+            for pos, info in vis.items()
+            if info["wastes"]["green"] > 0 and pos not in knowledge["yielded_wastes"]
+        ]
         if targets:
             targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
             if green_coordination and visible_green_peers:
@@ -471,7 +549,7 @@ class GreenAgent(RobotAgent):
                 if best_move:
                     return with_msgs({"type": "move", "to": best_move})
 
-        # 5. Coordination fallback: if no visible target is pursued, try 1+1 merge.
+        # 6. Coordination fallback: if no visible target is pursued, try 1+1 merge.
         if green_coordination and int(inv.get("green", 0) or 0) == 1 and int(inv.get("yellow", 0) or 0) == 0:
             my_id = knowledge.get("agent_id")
             my_pos = tuple(p["position"])
@@ -520,12 +598,18 @@ class GreenAgent(RobotAgent):
                             return with_msgs({"type": "move", "to": best_move})
                     return with_msgs({"type": "wait"})
 
-        # 6. Move randomly if nothing else to do
+        # 7. Communication pathfinding.
+        if knowledge["known_wastes"]:
+            comm_targets = list(knowledge["known_wastes"])
+            comm_targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
+            best_move = RobotAgent.best_move_towards(comm_targets[0], p["allowed_moves"])
+            if best_move:
+                return with_msgs({"type": "move", "to": best_move})
+
+        # 8. Move randomly if nothing else to do.
         if p["allowed_moves"]:
             return with_msgs({"type": "move_random"})
         return with_msgs({"type": "wait"})
-
-
 class YellowAgent(RobotAgent):
     """z1-z2, pick yellow, transform 2 yellow -> 1 red, then carry east."""
 
@@ -541,9 +625,17 @@ class YellowAgent(RobotAgent):
 
          # Read messages from Green robots)
         knowledge.setdefault("known_wastes", set())
+        knowledge.setdefault("yielded_wastes", set())
+        yield_to_peer = False
+
         for msg in knowledge.get("inbox", []):
             if msg["topic"] == "dropped_waste":
                 knowledge["known_wastes"].add(msg["data"])
+            elif msg["topic"] == "holding_one":
+                # Negotiation: If peer also has 1, the lower ID yields (drops theirs)
+                peer_id = msg["data"]["id"]
+                if inv["yellow"] == 1 and p["id"] < peer_id:
+                    yield_to_peer = True
         knowledge["inbox"] = []
 
         # Remove yellow wastes from memory if they are no longer there
@@ -551,47 +643,73 @@ class YellowAgent(RobotAgent):
         for kw in knowledge["known_wastes"]:
             if kw == p["position"] and p["cell_wastes"]["yellow"] == 0:
                 to_remove.add(kw)
-            elif kw in vis and vis[kw]["wastes"]["yellow"] == 0:
-                to_remove.add(kw)
         knowledge["known_wastes"] -= to_remove
 
-        # Anti-Deadlock Timeout
-        if inv["yellow"] == 1:
-            knowledge["frustration"] = knowledge.get("frustration", 0) + 1
-        else:
-            knowledge["frustration"] = 0
+        to_remove_yielded = set()
+        for yw in knowledge["yielded_wastes"]:
+            if (yw == p["position"] and p["cell_wastes"]["yellow"] == 0) or \
+               (yw in vis and vis[yw]["wastes"]["yellow"] == 0):
+                to_remove_yielded.add(yw)
+        knowledge["yielded_wastes"] -= to_remove_yielded
 
-        if knowledge.get("frustration", 0) > 20:
-            knowledge["frustration"] = 0
-            return {"type": "drop", "waste": "yellow"}
+        messages_to_send = []
+        def with_msgs(action_dict):
+            if messages_to_send:
+                action_dict["messages"] = action_dict.get("messages", []) + messages_to_send
+            return action_dict
 
         # 1. Check if we can transform
         if inv["yellow"] >= 2:
-            return {"type": "transform", "from": "yellow", "to": "red", "count": 2}
+            return with_msgs({"type": "transform", "from": "yellow", "to": "red", "count": 2})
 
         # 2. Check if we have red waste to move/drop
         if inv["red"] >= 1:
             if p["frontier_to_next_zone_for_drop"]:
-                return {
-                    "type": "drop",
-                    "waste": "red",
-                    "messages": [{"to": "red", "topic": "dropped_waste", "data": p["position"]}]
-                }
-            return {"type": "move_east"}
+                messages_to_send.append({"to": "red", "topic": "dropped_waste", "data": p["position"]})
+                return with_msgs({"type": "drop", "waste": "red"})
+            return with_msgs({"type": "move_east"})
 
-        # 3. Check if there is yellow waste on the CURRENT tile
-        if p["cell_wastes"]["yellow"] > 0:
-            return {"type": "pickup", "waste": "yellow"}
+        # 3. Handle holding exactly 1 yellow waste
+        if inv["yellow"] == 1:
+            if not knowledge.get("use_communication", True):
+                knowledge["frustration"] = knowledge.get("frustration", 0) + 1
+                if knowledge["frustration"] > 20:
+                    knowledge["frustration"] = 0
+                    return with_msgs({"type": "drop", "waste": "yellow"})
+            else:
+                if yield_to_peer:
+                    messages_to_send.append({"to": "yellow", "topic": "dropped_waste", "data": p["position"]})
+                    knowledge["frustration"] = 0
+                    knowledge["yielded_wastes"].add(p["position"])
+                    return with_msgs({"type": "drop", "waste": "yellow"})
+                elif not knowledge.get("known_wastes"):
+                    knowledge["frustration"] = knowledge.get("frustration", 0) + 1
+                    if knowledge["frustration"] % 10 == 0:
+                        messages_to_send.append({"to": "yellow", "topic": "holding_one", "data": {"id": p["id"], "pos": p["position"]}})
+        else:
+            knowledge["frustration"] = 0
 
-        # 4. Pathfinding
-        targets = [pos for pos, info in vis.items() if info["wastes"]["yellow"] > 0]
+        # 4. Check if there is yellow waste on the CURRENT tile
+        if p["cell_wastes"]["yellow"] > 0 and p["position"] not in knowledge["yielded_wastes"]:
+            return with_msgs({"type": "pickup", "waste": "yellow"})
+
+        # 5. Pathfinding
+        targets = [pos for pos, info in vis.items() if info["wastes"]["yellow"] > 0 and pos not in knowledge["yielded_wastes"]]
         if targets:
             targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
             best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
             if best_move:
-                return {"type": "move", "to": best_move}
+                return with_msgs({"type": "move", "to": best_move})
 
-        # 5. Seek border & patrol: Move to the Z1/Z2 border and patrol vertically
+        # 6. Communication Pathfinding
+        if knowledge["known_wastes"]:
+            targets = list(knowledge["known_wastes"])
+            targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
+            best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
+            if best_move:
+                return with_msgs({"type": "move", "to": best_move})
+
+        # 7. Seek border & patrol: Move to the Z1/Z2 border and patrol vertically
         if inv["yellow"] < 2 and knowledge.get("patrol_border", True):
             at_pickup_border = False
             if vis:
@@ -602,24 +720,24 @@ class YellowAgent(RobotAgent):
             if at_pickup_border:
                 vertical_moves = [m for m in p["allowed_moves"] if m[0] == p["position"][0]]
                 if vertical_moves:
-                    return {"type": "move", "to": random.choice(vertical_moves)}
-                return {"type": "wait"}
+                    return with_msgs({"type": "move", "to": random.choice(vertical_moves)})
+                return with_msgs({"type": "wait"})
 
             # If we are not at the border yet, navigate towards it
             if p["zone"] == "z2" and p["allowed_moves"]:
                 west_moves = [m for m in p["allowed_moves"] if m[0] < p["position"][0]]
                 if west_moves:
-                    return {"type": "move", "to": random.choice(west_moves)}
+                    return with_msgs({"type": "move", "to": random.choice(west_moves)})
             elif p["zone"] == "z1" and p["allowed_moves"]:
                 east_moves = [m for m in p["allowed_moves"] if m[0] > p["position"][0]]
                 if east_moves:
-                    return {"type": "move", "to": random.choice(east_moves)}
+                    return with_msgs({"type": "move", "to": random.choice(east_moves)})
 
-        # 6. Move randomly if nothing else to do
+        # 8. Move randomly if nothing else to do
         if p["allowed_moves"]:
-            return {"type": "move_random"}
+            return with_msgs({"type": "move_random"})
 
-        return {"type": "wait"}
+        return with_msgs({"type": "wait"})
 
 
 class RedAgent(RobotAgent):
@@ -649,8 +767,6 @@ class RedAgent(RobotAgent):
         for kw in knowledge["known_wastes"]:
             if kw == p["position"] and p["cell_wastes"]["red"] == 0:
                 to_remove.add(kw)
-            elif kw in vis and vis[kw]["wastes"]["red"] == 0:
-                to_remove.add(kw)
         knowledge["known_wastes"] -= to_remove
 
         # Save the position of the disposal zone if we see it or are on it
@@ -665,7 +781,7 @@ class RedAgent(RobotAgent):
 
         # Share discovery with peers
         messages_to_send = []
-        if "disposal_zone_pos" in knowledge and not knowledge.get("has_broadcasted_disposal"):
+        if knowledge.get("use_communication", True) and "disposal_zone_pos" in knowledge and not knowledge.get("has_broadcasted_disposal"):
             messages_to_send.append({
                 "to": "red",
                 "topic": "disposal_zone",
@@ -690,21 +806,34 @@ class RedAgent(RobotAgent):
                 best_move = RobotAgent.best_move_towards(knowledge["disposal_zone_pos"], p["allowed_moves"])
                 if best_move:
                     return with_msgs({"type": "move", "to": best_move})
-            
+
             # Otherwise, keep exploring east until we find it
             return with_msgs({"type": "move_east"})
 
-        # 2. Check if there is red waste on the CURRENT tile
+        # 2. Check if there is red waste on the current tile
         if p["cell_wastes"]["red"] > 0:
             return with_msgs({"type": "pickup", "waste": "red"})
 
-        # 3. Pathfinding: Look for red waste in ADJACENT tiles
-        if "adjacent_tiles" in p:
-            for pos, tile_info in p["adjacent_tiles"].items():
-                if pos in p["allowed_moves"] and tile_info["wastes"]["red"] > 0:
-                    return with_msgs({"type": "move", "to": pos})
+        # 3. Pathfinding: Look for red waste in adjacent tiles
+        targets = [pos for pos, info in vis.items() if info["wastes"]["red"] > 0] if vis else []
+        if not targets and adj:
+            targets = [pos for pos, info in adj.items() if info["wastes"]["red"] > 0]
 
-        # 4. Seek border & patrol: Move to the Z2/Z3 border and patrol vertically
+        if targets:
+            targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
+            best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
+            if best_move:
+                return with_msgs({"type": "move", "to": best_move})
+
+        # 4. Communication Pathfinding
+        if knowledge["known_wastes"]:
+            targets = list(knowledge["known_wastes"])
+            targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
+            best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
+            if best_move:
+                return with_msgs({"type": "move", "to": best_move})
+
+        # 5. Seek border & patrol: Move to the Z2/Z3 border and patrol vertically
         if inv["red"] < 1 and knowledge.get("patrol_border", True):
             at_pickup_border = False
             if adj:
@@ -722,7 +851,7 @@ class RedAgent(RobotAgent):
             elif p["zone"] in ("z1", "z2") and p["allowed_moves"]:
                 return with_msgs({"type": "move_east"})
 
-        # 5. Move randomly if nothing else to do
+        # 6. Move randomly if nothing else to do
         if p["allowed_moves"]:
             return with_msgs({"type": "move_random"})
 

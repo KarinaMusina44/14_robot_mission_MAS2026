@@ -211,3 +211,5 @@ __marimo__/
 
 # batch files
 /batch_results/batch_raw.csv
+
+/batch_results/
