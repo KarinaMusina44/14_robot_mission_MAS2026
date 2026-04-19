@@ -36,6 +36,11 @@ To run the simulation in the terminal and output the step-by-step metrics (usefu
 python run.py --steps 100 --n-waste 30 --verbose
 ```
 
+Example with Green-to-Green communication enabled (+ communication logs):
+```bash
+python run.py --steps 100 --n-waste 30 --green-coordination --log-communications --verbose
+```
+
 
 ---
 
@@ -76,5 +81,24 @@ The baseline requirement was to implement a random walk. However, a purely react
 1. The environment (`model.do`) passes `adjacent_tiles` in the percepts.
 2. During deliberation, the agent scans these adjacent tiles.
 3. If a target waste (or the disposal zone) is spotted, the agent decisively targets that cell instead of moving randomly.
+
+### Green-to-Green Communication
+We introduced an optional local communication protocol between Green robots, controlled by `green_coordination`.
+
+When enabled, Green agents exchange two message types with visible Green peers:
+* `green_visible_targets`: the waste targets currently visible to the sender.
+* `green_state`: the sender position and current inventory state.
+
+This supports two coordination behaviors:
+1. **Shared-target arbitration:** if two Green agents see the same green waste, they agree on a single collector using a deterministic rule (closest robot, then agent id as tie-breaker).
+2. **Inventory merge (1+1):** if two Green agents each carry exactly one green unit, they can coordinate so one transfers its unit to the other (`transfer_green`). This creates a `2 green` inventory on one robot, allowing faster `2 green -> 1 yellow` transformation.
+
+Activation:
+* **Solara UI:** `Enable Green Coordination` checkbox.
+* **CLI (`run.py`):** `--green-coordination` / `--no-green-coordination`.
+* **Batch (`batch_experiments.py`):** `--green-coordination` / `--no-green-coordination`.
+
+Communication logs:
+* Enable terminal logging with `log_communications` (`--log-communications` in CLI/batch or `Log Communications in Terminal` in Solara UI).
 
 ---

@@ -32,6 +32,8 @@ class RobotMissionModel(Model):
         n_yellow_robots: int = 2,
         n_red_robots: int = 1,
         vision: int = 1,
+        green_coordination: bool = False,
+        log_communications: bool = False,
         use_memory: bool = True,
         patrol_border: bool = False,
         rng: Optional[Union[int, np.random.Generator]] = None,
@@ -46,6 +48,8 @@ class RobotMissionModel(Model):
         self.height = height
         self.n_waste = max(0, int(n_waste))
         self.n_waste = max(4, (self.n_waste // 4) * 4)
+        self.green_coordination = bool(green_coordination)
+        self.log_communications = bool(log_communications)
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
         self.running = True
 
@@ -61,6 +65,7 @@ class RobotMissionModel(Model):
         self.cumulative_moves_yellow: int = 0
         self.cumulative_moves_red: int = 0
         self.time_to_clear = None
+        self.communication_events: List[str] = []
 
         self._init_radioactivity_field()
         self._init_waste_disposal_zone()
@@ -71,6 +76,7 @@ class RobotMissionModel(Model):
             n_yellow_robots=n_yellow_robots,
             n_red_robots=n_red_robots,
             vision=vision,
+            green_coordination=green_coordination,
             use_memory=use_memory,
             patrol_border=patrol_border,
         )
@@ -94,6 +100,42 @@ class RobotMissionModel(Model):
                 "time_to_clear": "time_to_clear",
             }
         )
+
+    def _format_comm_payload(self, payload: Any) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+        compact: Dict[str, Any] = {}
+        for key, value in payload.items():
+            if isinstance(value, list) and len(value) > 8:
+                compact[key] = f"list(len={len(value)})"
+            else:
+                compact[key] = value
+        return compact
+
+    def log_communication_event(
+        self,
+        sender: RobotAgent,
+        message: Dict[str, Any],
+        recipients: List[RobotAgent],
+    ) -> None:
+        if not bool(getattr(self, "log_communications", False)):
+            return
+
+        sender_label = f"{getattr(sender, 'type', sender.__class__.__name__)}#{getattr(sender, 'unique_id', '?')}"
+        recipient_labels = [
+            f"{getattr(r, 'type', r.__class__.__name__)}#{getattr(r, 'unique_id', '?')}"
+            for r in recipients
+        ]
+        topic = message.get("topic", "unknown")
+        data = self._format_comm_payload(message.get("data"))
+        line = (
+            f"[COMM t={int(getattr(self, 'time', 0))}] "
+            f"{sender_label} -> {recipient_labels} | topic={topic} | data={data}"
+        )
+        self.communication_events.append(line)
+        if len(self.communication_events) > 500:
+            self.communication_events = self.communication_events[-500:]
+        print(line, flush=True)
 
     def _waste_counts_total(self) -> Dict[str, int]:
         counts = {"green": 0, "yellow": 0, "red": 0}
@@ -168,6 +210,7 @@ class RobotMissionModel(Model):
         n_yellow_robots: int,
         n_red_robots: int,
         vision: int = 1,
+        green_coordination: bool = False,
         use_memory: bool = True,
         patrol_border: bool = False,
     ) -> None:
@@ -176,27 +219,29 @@ class RobotMissionModel(Model):
                 robot_cls = self.random.choice(
                     [GreenAgent, YellowAgent, RedAgent])
                 self._spawn_one_robot(
-                    robot_cls, vision, use_memory, patrol_border
+                    robot_cls, vision, green_coordination, use_memory, patrol_border
                 )
             return
 
         for _ in range(max(0, n_green_robots)):
-            self._spawn_one_robot(GreenAgent, vision, use_memory, patrol_border)
+            self._spawn_one_robot(GreenAgent, vision, green_coordination, use_memory, patrol_border)
         for _ in range(max(0, n_yellow_robots)):
-            self._spawn_one_robot(YellowAgent, vision, use_memory, patrol_border)
+            self._spawn_one_robot(YellowAgent, vision, green_coordination, use_memory, patrol_border)
         for _ in range(max(0, n_red_robots)):
-            self._spawn_one_robot(RedAgent, vision, use_memory, patrol_border)
+            self._spawn_one_robot(RedAgent, vision, green_coordination, use_memory, patrol_border)
 
     def _spawn_one_robot(
         self,
         robot_cls: type[RobotAgent],
         vision: int,
+        green_coordination: bool,
         use_memory: bool,
         patrol_border: bool,
     ) -> None:
         robot = robot_cls(
             model=self,
             vision=vision,
+            green_coordination=green_coordination,
             use_memory=use_memory,
             patrol_border=patrol_border,
         )
@@ -224,6 +269,13 @@ class RobotMissionModel(Model):
         return (0, 0)
 
     def step(self) -> None:
+        # Keep per-agent toggle in sync so UI parameter changes can apply live.
+        enabled = bool(getattr(self, "green_coordination", False))
+        for robot in self.robot_agents:
+            knowledge = getattr(robot, "knowledge", None)
+            if isinstance(knowledge, dict):
+                knowledge["green_coordination"] = enabled
+
         robots = list(self.robot_agents)
         self.random.shuffle(robots)
         for robot in robots:
@@ -303,6 +355,31 @@ class RobotMissionModel(Model):
                 inventory[src] -= count
                 inventory[dst] += 1
                 action_success = True
+
+        elif action_type == "transfer_green":
+            receiver_id = self._action_get(action, "to_id")
+            count = int(self._action_get(action, "count", 1) or 0)
+            receiver = self._robot_by_unique_id(receiver_id)
+            if (
+                isinstance(agent, GreenAgent)
+                and isinstance(receiver, GreenAgent)
+                and receiver is not agent
+                and count > 0
+                and inventory.get("green", 0) >= count
+                and self._can_transfer_between(agent, receiver)
+            ):
+                receiver_inventory = self._get_inventory(receiver)
+                inventory["green"] -= count
+                receiver_inventory["green"] += count
+                action_success = True
+                self.log_communication_event(
+                    sender=agent,
+                    message={
+                        "topic": "transfer_green",
+                        "data": {"count": count},
+                    },
+                    recipients=[receiver],
+                )
 
         elif action_type == "drop":
             waste_type = self._action_get(action, "waste")
@@ -409,6 +486,17 @@ class RobotMissionModel(Model):
             if p[0] > agent.pos[0] and self._zone_for_x(p[0]) == target_zone: # type: ignore
                 return True
         return False
+
+    def _robot_by_unique_id(self, unique_id: Any) -> Optional[RobotAgent]:
+        for robot in self.robot_agents:
+            if getattr(robot, "unique_id", None) == unique_id:
+                return robot
+        return None
+
+    def _can_transfer_between(self, sender: RobotAgent, receiver: RobotAgent) -> bool:
+        sx, sy = sender.pos # type: ignore
+        rx, ry = receiver.pos # type: ignore
+        return max(abs(sx - rx), abs(sy - ry)) <= 1
 
     def _is_disposal_cell(self, pos: Position) -> bool:
         if self.waste_disposal_pos is not None and pos == self.waste_disposal_pos:

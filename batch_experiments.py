@@ -182,6 +182,32 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated values for robot vision radius.",
     )
     parser.add_argument(
+        "--green-coordination",
+        dest="green_coordination",
+        action="store_true",
+        help="Enable communication/coordination between visible green robots.",
+    )
+    parser.add_argument(
+        "--no-green-coordination",
+        dest="green_coordination",
+        action="store_false",
+        help="Disable communication/coordination between visible green robots.",
+    )
+    parser.set_defaults(green_coordination=False)
+    parser.add_argument(
+        "--log-communications",
+        dest="log_communications",
+        action="store_true",
+        help="Print inter-agent communication events in the terminal.",
+    )
+    parser.add_argument(
+        "--no-log-communications",
+        dest="log_communications",
+        action="store_false",
+        help="Disable communication logs in the terminal.",
+    )
+    parser.set_defaults(log_communications=False)
+    parser.add_argument(
         "--iterations",
         type=int,
         default=5,
@@ -276,6 +302,8 @@ def main() -> int:
         "n_yellow_robots": _parse_int_list(args.n_yellow_robots),
         "n_red_robots": _parse_int_list(args.n_red_robots),
         "vision": _parse_vision_values(args.vision),
+        "green_coordination": [args.green_coordination],
+        "log_communications": [args.log_communications],
     }
     seed_values = [args.seed_start + i for i in range(max(1, args.iterations))]
 
@@ -322,6 +350,8 @@ def main() -> int:
         "n_yellow_robots",
         "n_red_robots",
         "vision",
+        "green_coordination",
+        "log_communications",
     ]
     completion_df = _extract_completion_per_run(
         df=df,

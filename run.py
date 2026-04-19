@@ -30,6 +30,8 @@ def _build_model_kwargs(args: argparse.Namespace, model_cls: type) -> Dict[str, 
         "n_red_robots": args.n_red_robots,
         "n_green_wastes": requested_waste,
         "n_waste": requested_waste,
+        "green_coordination": args.green_coordination,
+        "log_communications": args.log_communications,
         "rng": args.seed,
         "verbose": args.verbose,
     }
@@ -156,6 +158,32 @@ def parse_args() -> argparse.Namespace:
         help="Initial waste count (generic, default: 30).",
     )
     parser.add_argument("--seed", type=int, help="Random seed.")
+    parser.add_argument(
+        "--green-coordination",
+        dest="green_coordination",
+        action="store_true",
+        help="Enable communication/coordination between visible green robots.",
+    )
+    parser.add_argument(
+        "--no-green-coordination",
+        dest="green_coordination",
+        action="store_false",
+        help="Disable communication/coordination between visible green robots.",
+    )
+    parser.set_defaults(green_coordination=None)
+    parser.add_argument(
+        "--log-communications",
+        dest="log_communications",
+        action="store_true",
+        help="Print inter-agent communication events in the terminal.",
+    )
+    parser.add_argument(
+        "--no-log-communications",
+        dest="log_communications",
+        action="store_false",
+        help="Disable communication logs in the terminal.",
+    )
+    parser.set_defaults(log_communications=None)
     parser.add_argument("--verbose", action="store_true", help="Print counts during simulation.")
     parser.add_argument(
         "--report-every",

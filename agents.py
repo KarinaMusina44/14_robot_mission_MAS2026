@@ -15,17 +15,26 @@ class RobotAgent(Agent):
     prev_zone = None
     robot_color = "unknown"
 
-    def __init__(self, model, vision=2, use_memory=True, patrol_border=True):
+    def __init__(
+        self,
+        model,
+        vision=2,
+        green_coordination=False,
+        use_memory=True,
+        patrol_border=True,
+    ):
         super().__init__(model)
         self.vision = vision
         self.type = self.__class__.robot_color
         self.allowed_zones = set(self.__class__.allowed_zones)
         self.knowledge = {
+            "agent_id": self.unique_id,
             "inventory": {"green": 0, "yellow": 0, "red": 0},
             "last_percepts": {},
             "last_action": None,
             "history": [],
             "model_percepts": {},
+            "green_coordination": green_coordination,
             "use_memory": use_memory,
             "patrol_border": patrol_border,
             "inbox": [],
@@ -147,7 +156,26 @@ class RobotAgent(Agent):
             "in_disposal_zone": self.in_disposal_zone(self.pos),
             "frontier_to_next_zone_for_drop": frontier_to_next_zone_for_drop,
             "visible_tiles": self.get_visible_tiles(), # Expose extended vision
+            "visible_robots": self.get_visible_robots(),
         }
+
+    def get_visible_robots(self):
+        visible_robots = []
+        neighbors = self.model.grid.get_neighborhood(
+            self.pos, moore=True, include_center=False, radius=self.vision
+        )
+        for pos in neighbors:
+            contents = self.model.grid.get_cell_list_contents([pos])
+            for obj in contents:
+                if isinstance(obj, RobotAgent):
+                    visible_robots.append(
+                        {
+                            "id": getattr(obj, "unique_id", None),
+                            "type": getattr(obj, "type", None),
+                            "position": tuple(pos),
+                        }
+                    )
+        return visible_robots
 
     @staticmethod
     def best_move_towards(target, allowed_moves):
@@ -251,9 +279,23 @@ class RobotAgent(Agent):
 
         if "messages" in action:
             for msg in action["messages"]:
+                recipients = msg.get("recipients")
+                recipients_set = set(recipients) if isinstance(recipients, list) else None
+                delivered = []
                 for other_agent in self.model.robot_agents:
-                    if other_agent is not self and other_agent.type == msg["to"]:
-                        other_agent.knowledge["inbox"].append(msg)
+                    if other_agent is self or other_agent.type != msg["to"]:
+                        continue
+                    if (
+                        recipients_set is not None
+                        and other_agent.unique_id not in recipients_set
+                    ):
+                        continue
+                    envelope = dict(msg)
+                    envelope.setdefault("from_id", self.unique_id)
+                    other_agent.knowledge["inbox"].append(envelope)
+                    delivered.append(other_agent)
+                if delivered and hasattr(self.model, "log_communication_event"):
+                    self.model.log_communication_event(self, msg, delivered)
 
         model_percepts = self.do(action)
         new_percepts = self.percepts()
@@ -273,41 +315,215 @@ class GreenAgent(RobotAgent):
     robot_color = "green"
 
     @staticmethod
+    def _is_adjacent(a, b):
+        return max(abs(a[0] - b[0]), abs(a[1] - b[1])) <= 1
+
+    @staticmethod
+    def _choose_merge_winner(my_id, my_pos, peer_id, peer_pos):
+        # Favor the robot already further east (closer to drop frontier in z1).
+        # Tie-break with agent id to keep the choice deterministic.
+        my_rank = (-int(my_pos[0]), str(my_id))
+        peer_rank = (-int(peer_pos[0]), str(peer_id))
+        if my_rank <= peer_rank:
+            return my_id
+        return peer_id
+
+    @staticmethod
     def deliberate(knowledge):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
         vis = p.get("visible_tiles", {})
+        green_coordination = bool(knowledge.get("green_coordination", False))
+        visible_robots = p.get("visible_robots", [])
+
+        visible_green_peers = []
+        for robot in visible_robots:
+            if (
+                isinstance(robot, dict)
+                and robot.get("type") == "green"
+                and robot.get("id") is not None
+            ):
+                visible_green_peers.append(robot)
+
+        messages_to_send = []
+        if green_coordination and visible_green_peers:
+            own_visible_targets = [
+                tuple(pos)
+                for pos, info in vis.items()
+                if info["wastes"]["green"] > 0
+            ]
+            messages_to_send.append(
+                {
+                    "to": "green",
+                    "topic": "green_visible_targets",
+                    "data": {
+                        "sender_pos": tuple(p["position"]),
+                        "targets": own_visible_targets,
+                    },
+                    "recipients": [peer["id"] for peer in visible_green_peers],
+                }
+            )
+            messages_to_send.append(
+                {
+                    "to": "green",
+                    "topic": "green_state",
+                    "data": {
+                        "sender_pos": tuple(p["position"]),
+                        "inv_green": int(inv.get("green", 0) or 0),
+                        "inv_yellow": int(inv.get("yellow", 0) or 0),
+                    },
+                    "recipients": [peer["id"] for peer in visible_green_peers],
+                }
+            )
+
+        def with_msgs(action_dict):
+            if messages_to_send:
+                existing_messages = action_dict.get("messages", [])
+                if not isinstance(existing_messages, list):
+                    existing_messages = []
+                action_dict["messages"] = existing_messages + messages_to_send
+            return action_dict
+
+        peer_claims = {}
+        peer_states = {}
+        known_peer_ids = {peer["id"] for peer in visible_green_peers}
+        for msg in knowledge.get("inbox", []):
+            sender_id = msg.get("from_id")
+            if sender_id not in known_peer_ids:
+                continue
+            topic = msg.get("topic")
+            data = msg.get("data")
+            if not isinstance(data, dict):
+                continue
+
+            sender_pos = data.get("sender_pos")
+            if not isinstance(sender_pos, (list, tuple)) or len(sender_pos) != 2:
+                continue
+            sender_pos = tuple(sender_pos)
+
+            if topic == "green_visible_targets":
+                raw_targets = data.get("targets", [])
+                targets = set()
+                if isinstance(raw_targets, list):
+                    for target in raw_targets:
+                        if isinstance(target, (list, tuple)) and len(target) == 2:
+                            targets.add(tuple(target))
+                peer_claims[sender_id] = {
+                    "pos": sender_pos,
+                    "targets": targets,
+                }
+            elif topic == "green_state":
+                peer_states[sender_id] = {
+                    "pos": sender_pos,
+                    "inv_green": int(data.get("inv_green", 0) or 0),
+                    "inv_yellow": int(data.get("inv_yellow", 0) or 0),
+                }
+        knowledge["inbox"] = []
 
         # 1. Check if we can transform
         if inv["green"] >= 2:
-            return {"type": "transform", "from": "green", "to": "yellow", "count": 2}
+            return with_msgs({"type": "transform", "from": "green", "to": "yellow", "count": 2})
 
         # 2. Check if we have yellow waste to move/drop
         if inv["yellow"] >= 1:
             if p["frontier_to_next_zone_for_drop"]:
-                return {
+                return with_msgs({
                         "type": "drop", 
                         "waste": "yellow",
                         "messages": [{"to": "yellow", "topic": "dropped_waste", "data": p["position"]}]
-                    }
-            return {"type": "move_east"}
+                    })
+            return with_msgs({"type": "move_east"})
 
         # 3. Check if there is green waste on the CURRENT tile
         if p["cell_wastes"]["green"] > 0:
-            return {"type": "pickup", "waste": "green"}
+            return with_msgs({"type": "pickup", "waste": "green"})
 
         # 4. Pathfinding (Extended Vision)
         targets = [pos for pos, info in vis.items() if info["wastes"]["green"] > 0]
         if targets:
             targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
-            best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
-            if best_move:
-                return {"type": "move", "to": best_move}
+            if green_coordination and visible_green_peers:
+                my_id = knowledge.get("agent_id")
+                my_pos = tuple(p["position"])
 
-        # 5. Move randomly if nothing else to do
+                for target in targets:
+                    contenders = [
+                        (
+                            abs(my_pos[0] - target[0]) + abs(my_pos[1] - target[1]),
+                            str(my_id),
+                            my_id,
+                        )
+                    ]
+                    for peer_id, claim in peer_claims.items():
+                        if target not in claim["targets"]:
+                            continue
+                        peer_pos = claim["pos"]
+                        peer_distance = abs(peer_pos[0] - target[0]) + abs(peer_pos[1] - target[1])
+                        contenders.append((peer_distance, str(peer_id), peer_id))
+
+                    winner_id = min(contenders, key=lambda c: (c[0], c[1]))[2]
+                    if winner_id == my_id:
+                        best_move = RobotAgent.best_move_towards(target, p["allowed_moves"])
+                        if best_move:
+                            return with_msgs({"type": "move", "to": best_move})
+            else:
+                best_move = RobotAgent.best_move_towards(targets[0], p["allowed_moves"])
+                if best_move:
+                    return with_msgs({"type": "move", "to": best_move})
+
+        # 5. Coordination fallback: if no visible target is pursued, try 1+1 merge.
+        if green_coordination and int(inv.get("green", 0) or 0) == 1 and int(inv.get("yellow", 0) or 0) == 0:
+            my_id = knowledge.get("agent_id")
+            my_pos = tuple(p["position"])
+            merge_candidates = []
+            for peer in visible_green_peers:
+                peer_id = peer.get("id")
+                if peer_id is None:
+                    continue
+                state = peer_states.get(peer_id)
+                if state is None:
+                    continue
+                if state["inv_green"] == 1 and state["inv_yellow"] == 0:
+                    merge_candidates.append(
+                        {
+                            "id": peer_id,
+                            "position": tuple(peer["position"]),
+                        }
+                    )
+
+            if merge_candidates:
+                merge_candidates.sort(
+                    key=lambda c: (
+                        abs(c["position"][0] - my_pos[0]) + abs(c["position"][1] - my_pos[1]),
+                        str(c["id"]),
+                    )
+                )
+                partner = merge_candidates[0]
+                partner_id = partner["id"]
+                partner_pos = tuple(partner["position"])
+                winner_id = GreenAgent._choose_merge_winner(
+                    my_id=my_id,
+                    my_pos=my_pos,
+                    peer_id=partner_id,
+                    peer_pos=partner_pos,
+                )
+                if winner_id != my_id:
+                    if GreenAgent._is_adjacent(my_pos, partner_pos):
+                        return with_msgs({"type": "transfer_green", "to_id": winner_id, "count": 1})
+                    best_move = RobotAgent.best_move_towards(partner_pos, p["allowed_moves"])
+                    if best_move:
+                        return with_msgs({"type": "move", "to": best_move})
+                else:
+                    if not GreenAgent._is_adjacent(my_pos, partner_pos):
+                        best_move = RobotAgent.best_move_towards(partner_pos, p["allowed_moves"])
+                        if best_move:
+                            return with_msgs({"type": "move", "to": best_move})
+                    return with_msgs({"type": "wait"})
+
+        # 6. Move randomly if nothing else to do
         if p["allowed_moves"]:
-            return {"type": "move_random"}
-        return {"type": "wait"}
+            return with_msgs({"type": "move_random"})
+        return with_msgs({"type": "wait"})
 
 
 class YellowAgent(RobotAgent):

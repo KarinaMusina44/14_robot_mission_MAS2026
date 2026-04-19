@@ -1,9 +1,12 @@
 import matplotlib.patches as patches
 from mesa.visualization import SolaraViz, make_plot_component, make_space_component
 from mesa.visualization.components import AgentPortrayalStyle
+from mesa.datacollection import DataCollector
 from typing import Dict
 import math
+import pandas as pd
 import random
+import threading
 
 from agents import GreenAgent, RedAgent, YellowAgent
 from model import RobotMissionModel
@@ -15,6 +18,38 @@ from objects import Radioactivity, Waste, WasteDisposalZone
 _robots = []
 _disposal = []
 _current_model = None
+
+
+_ORIGINAL_GET_MODEL_VARS_DATAFRAME = DataCollector.get_model_vars_dataframe
+
+
+def _patched_get_model_vars_dataframe(self):
+    model = getattr(self, "model", None)
+    lock = getattr(model, "_datacollector_lock", None)
+
+    if lock is None:
+        try:
+            return _ORIGINAL_GET_MODEL_VARS_DATAFRAME(self)
+        except ValueError:
+            snapshot = {name: list(values) for name, values in self.model_vars.items()}
+    else:
+        with lock:
+            snapshot = {name: list(values) for name, values in self.model_vars.items()}
+
+    if not snapshot:
+        return pd.DataFrame()
+
+    min_len = min(len(values) for values in snapshot.values())
+    max_len = max(len(values) for values in snapshot.values())
+    if min_len != max_len:
+        snapshot = {name: values[:min_len] for name, values in snapshot.items()}
+
+    return pd.DataFrame(snapshot)
+
+
+if not getattr(DataCollector, "_threadsafe_model_vars_patch_applied", False):
+    DataCollector.get_model_vars_dataframe = _patched_get_model_vars_dataframe
+    DataCollector._threadsafe_model_vars_patch_applied = True
 
 
 def _robot_color(agent):
@@ -173,6 +208,8 @@ def _patched_robotmission_init(
     n_yellow_robots: int = 2,
     n_red_robots: int = 1,
     vision: int = 1,
+    green_coordination: bool = False,
+    log_communications: bool = False,
     use_memory: bool = True,
     patrol_border: bool = False,
     rng=None,
@@ -188,35 +225,45 @@ def _patched_robotmission_init(
         n_yellow_robots=n_yellow_robots,
         n_red_robots=n_red_robots,
         vision=vision,
+        green_coordination=green_coordination,
+        log_communications=log_communications,
         use_memory=use_memory,
         patrol_border=patrol_border,
         rng=rng,
         seed=seed,
     )
+    self._datacollector_lock = threading.RLock()
     _ensure_remaining_weight_reporters(self)
     self._viz_completion_animation = True
     self._fireworks_phase = 0
 
 
 def _patched_robotmission_step(self) -> None:
-    # Freeze world once complete, but keep stepping so fireworks can animate.
-    if (
-        getattr(self, "_viz_completion_animation", False)
-        and getattr(self, "time_to_clear", None) is not None
-    ):
-        self._fireworks_phase = int(getattr(self, "_fireworks_phase", 0)) + 1
-        self.running = True
-        # Keep time and history frozen after completion.
-        return
+    lock = getattr(self, "_datacollector_lock", None)
+    if lock is None:
+        # Fallback if lock is missing for any reason.
+        lock = threading.RLock()
+        self._datacollector_lock = lock
 
-    _ORIGINAL_ROBOTMISSION_STEP(self)
+    with lock:
+        # Freeze world once complete, but keep stepping so fireworks can animate.
+        if (
+            getattr(self, "_viz_completion_animation", False)
+            and getattr(self, "time_to_clear", None) is not None
+        ):
+            self._fireworks_phase = int(getattr(self, "_fireworks_phase", 0)) + 1
+            self.running = True
+            # Keep time and history frozen after completion.
+            return
 
-    if (
-        getattr(self, "_viz_completion_animation", False)
-        and getattr(self, "time_to_clear", None) is not None
-    ):
-        self.running = True
-        self._fireworks_phase = int(getattr(self, "_fireworks_phase", 0)) + 1
+        _ORIGINAL_ROBOTMISSION_STEP(self)
+
+        if (
+            getattr(self, "_viz_completion_animation", False)
+            and getattr(self, "time_to_clear", None) is not None
+        ):
+            self.running = True
+            self._fireworks_phase = int(getattr(self, "_fireworks_phase", 0)) + 1
 
 
 if not getattr(RobotMissionModel, "_remaining_viz_patch_applied", False):
@@ -324,6 +371,34 @@ def post_process(ax):
             bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "black"},
             zorder=10,
         )
+        green_coord = bool(getattr(_current_model, "green_coordination", False))
+        log_comm = bool(getattr(_current_model, "log_communications", False))
+        ax.text(
+            0.01,
+            0.93,
+            f"green_coordination={'ON' if green_coord else 'OFF'}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            color="#1B4332" if green_coord else "#6C757D",
+            bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "black"},
+            zorder=10,
+        )
+        ax.text(
+            0.01,
+            0.87,
+            f"log_communications={'ON' if log_comm else 'OFF'}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            color="#0B5394" if log_comm else "#6C757D",
+            bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "black"},
+            zorder=10,
+        )
 
         if _is_mission_complete(_current_model):
             _draw_fireworks(ax, _current_model)
@@ -367,6 +442,8 @@ model_params = {
     "n_yellow_robots": {"type": "SliderInt", "value": 2,   "label": "Yellow robots",     "min": 0,   "max": 30,  "step": 1},
     "n_red_robots":   {"type": "SliderInt", "value": 1,   "label": "Red robots",        "min": 0,   "max": 30,  "step": 1},
     "vision":         {"type": "SliderInt", "value": 2,   "label": "Robot Vision Radius", "min": 1, "max": 5, "step": 1},
+    "green_coordination": {"type": "Checkbox", "value": False, "label": "Enable Green Coordination"},
+    "log_communications": {"type": "Checkbox", "value": False, "label": "Log Communications in Terminal"},
     "use_memory":     {"type": "Checkbox",  "value": True, "label": "Use Red Robot Memory"},
     "patrol_border":  {"type": "Checkbox",  "value": True, "label": "Enable Border Patrol"},
     "seed": 42,
@@ -393,6 +470,8 @@ page = SolaraViz(
         n_yellow_robots=2,
         n_red_robots=1,
         vision=2,
+        green_coordination=False,
+        log_communications=False,
         use_memory=True,
         patrol_border=True,
         seed=42,
