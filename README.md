@@ -75,14 +75,15 @@ python batch_experiments.py --help
 
 ---
 
-## 3. Theoretical Framework and M&S Scope
+## 3. Theoretical Framework and M&S Scope (Lecture 2)
 
-Following Modeling and Simulation (M&S) framing:
+Following Modeling and Simulation (M&S) theory principles:
 
-- **Source System:** hazardous waste handling in a radiation-constrained facility.
-- **Experimental Frame:** evaluate how behavior toggles affect cleanup performance.
-- **Model:** `RobotMissionModel` manages spatial dynamics, movement constraints, and action effects.
-- **Simulator:** Mesa discrete-time stepping.
+- **Source System:** a hazardous waste logistics process where tasks are sequential (collect, transform, handoff, dispose) and must be solved under radiation and zone constraints.
+- **Experimental Frame:** evaluate how behavior toggles (communication, coordination, memory, patrol, sensing range, and robot counts) change cleanup speed.
+- **Model:** `RobotMissionModel` represents the environment (`MultiGrid`), zone restrictions, action rules (`move`, `pickup`, `transform`, `drop`, `put_away`), and inter-agent message exchange.
+- **Simulator:** Mesa executes the model in discrete time, with repeated runs under controlled parameter settings to compare strategies.
+
 
 ---
 
