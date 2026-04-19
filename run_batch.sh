@@ -14,8 +14,8 @@ echo "This script will run several batch experiments to analyze"
 echo "the impact of different agent features on the time to clear."
 
 # Global Settings
-PROCESSES=8       # Number of CPU cores to use (adjust if needed)
-ITERATIONS=10     # Number of simulation runs per parameter combination
+PROCESSES=4       # Number of CPU cores to use (adjust if needed)
+ITERATIONS=20     # Number of simulation runs per parameter combination
 MAX_STEPS=1500    # Timeout for a single run
 
 echo ""
@@ -75,10 +75,10 @@ echo "Testing the model's scalability by varying continuous parameters."
 python batch_experiments.py \
     --design ofat \
     --n-waste 4,16,24,32,40,48,56  \
-    --n-green-robots 1,2,3,4,6,8 \
+    --n-green-robots 1,2,3,4,6,7,8 \
     --n-yellow-robots 1,2,3,4,5 \
     --n-red-robots 1,2,3,4,5 \
-    --vision 1,2,3,4 \
+    --vision 1,2,3,4,5 \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
@@ -88,7 +88,7 @@ echo ""
 echo "📊 Experiment 7: Vision as a Communication Fallback"
 echo "Testing if a large vision radius can compensate for having no communication."
 python batch_experiments.py \
-    --vision 1,3,5 \
+    --vision 1,2,3,4,5 \
     --use-communication False \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \

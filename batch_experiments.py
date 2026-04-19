@@ -294,7 +294,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--n-waste",
         type=str,
-        default="32",
+        default="40",
         help="Comma-separated values for initial green waste count (must be divisible by 4).",
     )
     parser.add_argument(
@@ -318,7 +318,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--vision",
         type=str,
-        default="2",
+        default="3",
         help="Comma-separated values for robot vision radius.",
     )
     parser.add_argument(
