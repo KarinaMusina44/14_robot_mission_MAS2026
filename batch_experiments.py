@@ -72,6 +72,71 @@ def _pick_reference_value(values: list[Any]) -> Any:
     return unique_sorted[len(unique_sorted) // 2]
 
 
+def _unique_values_in_order(values: list[Any]) -> list[Any]:
+    unique: list[Any] = []
+    for value in values:
+        if value not in unique:
+            unique.append(value)
+    return unique
+
+
+def _build_reference_values(parameters: dict[str, list[Any]]) -> dict[str, Any]:
+    """Build anchor values used by OFAT and plotting.
+
+    Quantitative dimensions use the middle value.
+    Boolean/toggle dimensions use the first user-provided value as baseline.
+    """
+    middle_anchor_cols = {
+        "n_green_robots",
+        "n_red_robots",
+        "n_yellow_robots",
+        "n_waste",
+        "vision",
+    }
+    refs: dict[str, Any] = {}
+    for col, values in parameters.items():
+        unique = _unique_values_in_order(values)
+        if not unique:
+            raise ValueError(f"No values provided for parameter '{col}'.")
+        refs[col] = _pick_reference_value(unique) if col in middle_anchor_cols else unique[0]
+    return refs
+
+
+def _build_ofat_parameter_sets(
+    parameters: dict[str, list[Any]], reference_values: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Return unique one-factor-at-a-time parameter sets around a baseline."""
+    base = {col: reference_values[col] for col in parameters.keys()}
+    candidate_sets: list[dict[str, Any]] = [dict(base)]
+
+    for col, values in parameters.items():
+        unique = _unique_values_in_order(values)
+        if len(unique) <= 1:
+            continue
+        for value in unique:
+            combo = dict(base)
+            combo[col] = value
+            candidate_sets.append(combo)
+
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    ordered_cols = list(parameters.keys())
+    for combo in candidate_sets:
+        signature = tuple(combo[col] for col in ordered_cols)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        deduped.append(combo)
+    return deduped
+
+
+def _cartesian_size(parameters: dict[str, list[Any]]) -> int:
+    size = 1
+    for values in parameters.values():
+        size *= len(values)
+    return size
+
+
 def _filter_by_fixed_values(
     completion_df: pd.DataFrame, fixed_values: dict[str, Any]
 ) -> pd.DataFrame:
@@ -358,6 +423,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable plot generation.",
     )
+    parser.add_argument(
+        "--design",
+        type=str,
+        choices=("grid", "ofat"),
+        default="grid",
+        help="Batch design: 'grid' = full cartesian product, 'ofat' = one-factor-at-a-time around reference values.",
+    )
     return parser.parse_args()
 
 
@@ -422,23 +494,62 @@ def main() -> int:
         "multiple_wastes": _parse_bool_list(args.multiple_wastes),
     }
     seed_values = [args.seed_start + i for i in range(max(1, args.iterations))]
+    reference_values = _build_reference_values(parameters)
 
     print("Running batch experiments...")
+    print(f"design={args.design}")
     print(f"parameters={parameters}")
+    print(f"reference_values={reference_values}")
     print(f"seeds={seed_values}")
     print(
         f"max_steps={args.max_steps}, data_period={args.data_period}, processes={args.processes}"
     )
 
-    results = batch_run(
-        RobotMissionModel,
-        parameters=parameters,
-        number_processes=args.processes,
-        rng=seed_values,
-        max_steps=args.max_steps,
-        data_collection_period=args.data_period,
-        display_progress=not args.no_progress,
-    )
+    if args.design == "grid":
+        combinations = _cartesian_size(parameters)
+        print(
+            f"planned_parameter_sets={combinations}, planned_runs={combinations * len(seed_values)}"
+        )
+        results = batch_run(
+            RobotMissionModel,
+            parameters=parameters,
+            number_processes=args.processes,
+            rng=seed_values,
+            max_steps=args.max_steps,
+            data_collection_period=args.data_period,
+            display_progress=not args.no_progress,
+        )
+    else:
+        parameter_sets = _build_ofat_parameter_sets(parameters, reference_values)
+        print(
+            f"planned_parameter_sets={len(parameter_sets)}, planned_runs={len(parameter_sets) * len(seed_values)}"
+        )
+        results = []
+        run_id_offset = 0
+        for index, param_set in enumerate(parameter_sets, start=1):
+            print(f"[OFAT {index}/{len(parameter_sets)}] {param_set}")
+            run_parameters = {key: [value] for key, value in param_set.items()}
+            sub_results = batch_run(
+                RobotMissionModel,
+                parameters=run_parameters,
+                number_processes=args.processes,
+                rng=seed_values,
+                max_steps=args.max_steps,
+                data_collection_period=args.data_period,
+                display_progress=not args.no_progress,
+            )
+            if not sub_results:
+                raise RuntimeError(
+                    f"No results produced by batch_run for OFAT set {index}: {param_set}"
+                )
+
+            local_ids = [int(row.get("RunId", 0)) for row in sub_results]
+            local_span = (max(local_ids) + 1) if local_ids else 0
+            for row in sub_results:
+                row["RunId"] = int(row.get("RunId", 0)) + run_id_offset
+            run_id_offset += local_span
+            results.extend(sub_results)
+
     if not results:
         raise RuntimeError("No results produced by batch_run.")
 
@@ -503,20 +614,20 @@ def main() -> int:
         print("Plot generation disabled (--no-plots).")
         return 0
 
-    # For multi-variable plots, use the first specified parameter as the reference 'fixed' anchor
-    reference_values = {
-        "n_green_robots": _pick_reference_value(parameters["n_green_robots"]),
-        "n_red_robots": _pick_reference_value(parameters["n_red_robots"]),
-        "n_yellow_robots": _pick_reference_value(parameters["n_yellow_robots"]),
-        "n_waste": _pick_reference_value(parameters["n_waste"]),
-        "vision": _pick_reference_value(parameters["vision"]),
-        "green_coordination": parameters["green_coordination"][0],
-        "use_memory": parameters["use_memory"][0],
-        "patrol_border": parameters["patrol_border"][0],
-        "use_communication": parameters["use_communication"][0],
-        "multiple_wastes": parameters["multiple_wastes"][0],
+    # For multi-variable plots, use deterministic anchor values.
+    plot_reference_values = {
+        "n_green_robots": reference_values["n_green_robots"],
+        "n_red_robots": reference_values["n_red_robots"],
+        "n_yellow_robots": reference_values["n_yellow_robots"],
+        "n_waste": reference_values["n_waste"],
+        "vision": reference_values["vision"],
+        "green_coordination": reference_values["green_coordination"],
+        "use_memory": reference_values["use_memory"],
+        "patrol_border": reference_values["patrol_border"],
+        "use_communication": reference_values["use_communication"],
+        "multiple_wastes": reference_values["multiple_wastes"],
     }
-    print(f"Fixed reference values (anchors): {reference_values}")
+    print(f"Fixed reference values (anchors): {plot_reference_values}")
 
     per_color_specs = [
         (
@@ -559,7 +670,7 @@ def main() -> int:
     # Generate quantitative line plots
     for count_col, x_label, line_color, fill_color, plot_path in per_color_specs:
         fixed_values = {
-            col: value for col, value in reference_values.items() if col != count_col
+            col: value for col, value in plot_reference_values.items() if col != count_col
         }
         _save_time_vs_agent_count_plot(
             completion_df=completion_df,
@@ -583,7 +694,7 @@ def main() -> int:
     ]
     for col in bool_cols:
         if len(set(parameters[col])) > 1:  # Only plot if we passed multiple bool values
-            fixed_values = {k: v for k, v in reference_values.items() if k != col}
+            fixed_values = {k: v for k, v in plot_reference_values.items() if k != col}
             plot_path = outdir / f"plot_time_to_clear_vs_{col}.png"
             _save_time_vs_bool_plot(
                 completion_df=completion_df,

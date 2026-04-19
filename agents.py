@@ -254,25 +254,12 @@ class GreenAgent(RobotAgent):
     robot_color = "green"
 
     @staticmethod
-    def _is_adjacent(a, b):
-        return max(abs(a[0] - b[0]), abs(a[1] - b[1])) <= 1
-
-    @staticmethod
-    def _choose_merge_winner(my_id, my_pos, peer_id, peer_pos):
-        # Favor the robot already further east (closer to drop frontier in z1).
-        # Tie-break with agent id to keep the choice deterministic.
-        my_rank = (-int(my_pos[0]), str(my_id))
-        peer_rank = (-int(peer_pos[0]), str(peer_id))
-        if my_rank <= peer_rank:
-            return my_id
-        return peer_id
-
-    @staticmethod
     def deliberate(knowledge):
         p = knowledge["last_percepts"]
         inv = knowledge["inventory"]
         vis = p.get("visible_tiles", {})
-        green_coordination = bool(knowledge.get("green_coordination", False))
+        use_communication = bool(knowledge.get("use_communication", True))
+        green_coordination = bool(knowledge.get("green_coordination", False)) and use_communication
         visible_robots = p.get("visible_robots", [])
 
         visible_green_peers = []
@@ -302,18 +289,6 @@ class GreenAgent(RobotAgent):
                     "recipients": [peer["id"] for peer in visible_green_peers],
                 }
             )
-            messages_to_send.append(
-                {
-                    "to": "green",
-                    "topic": "green_state",
-                    "data": {
-                        "sender_pos": tuple(p["position"]),
-                        "inv_green": int(inv.get("green", 0) or 0),
-                        "inv_yellow": int(inv.get("yellow", 0) or 0),
-                    },
-                    "recipients": [peer["id"] for peer in visible_green_peers],
-                }
-            )
 
         def with_msgs(action_dict):
             if messages_to_send:
@@ -328,7 +303,6 @@ class GreenAgent(RobotAgent):
         yield_to_peer = False
 
         peer_claims = {}
-        peer_states = {}
         known_peer_ids = {peer["id"] for peer in visible_green_peers}
         inbox_messages = list(knowledge.get("inbox", []))
 
@@ -352,12 +326,6 @@ class GreenAgent(RobotAgent):
                         peer_claims[sender_id] = {
                             "pos": sender_pos,
                             "targets": targets,
-                        }
-                    elif topic == "green_state":
-                        peer_states[sender_id] = {
-                            "pos": sender_pos,
-                            "inv_green": int(data.get("inv_green", 0) or 0),
-                            "inv_yellow": int(data.get("inv_yellow", 0) or 0),
                         }
 
             if topic == "dropped_waste" and isinstance(data, (list, tuple)) and len(data) == 2:
@@ -467,56 +435,7 @@ class GreenAgent(RobotAgent):
                 if best_move:
                     return with_msgs({"type": "move", "to": best_move})
 
-        # 6. Coordination fallback: if no visible target is pursued, try 1+1 merge.
-        if green_coordination and int(inv.get("green", 0) or 0) == 1 and int(inv.get("yellow", 0) or 0) == 0:
-            my_id = knowledge.get("agent_id")
-            my_pos = tuple(p["position"])
-            merge_candidates = []
-            for peer in visible_green_peers:
-                peer_id = peer.get("id")
-                if peer_id is None:
-                    continue
-                state = peer_states.get(peer_id)
-                if state is None:
-                    continue
-                if state["inv_green"] == 1 and state["inv_yellow"] == 0:
-                    merge_candidates.append(
-                        {
-                            "id": peer_id,
-                            "position": tuple(peer["position"]),
-                        }
-                    )
-
-            if merge_candidates:
-                merge_candidates.sort(
-                    key=lambda c: (
-                        abs(c["position"][0] - my_pos[0]) + abs(c["position"][1] - my_pos[1]),
-                        str(c["id"]),
-                    )
-                )
-                partner = merge_candidates[0]
-                partner_id = partner["id"]
-                partner_pos = tuple(partner["position"])
-                winner_id = GreenAgent._choose_merge_winner(
-                    my_id=my_id,
-                    my_pos=my_pos,
-                    peer_id=partner_id,
-                    peer_pos=partner_pos,
-                )
-                if winner_id != my_id:
-                    if GreenAgent._is_adjacent(my_pos, partner_pos):
-                        return with_msgs({"type": "transfer_green", "to_id": winner_id, "count": 1})
-                    best_move = RobotAgent.best_move_towards(partner_pos, p["allowed_moves"])
-                    if best_move:
-                        return with_msgs({"type": "move", "to": best_move})
-                else:
-                    if not GreenAgent._is_adjacent(my_pos, partner_pos):
-                        best_move = RobotAgent.best_move_towards(partner_pos, p["allowed_moves"])
-                        if best_move:
-                            return with_msgs({"type": "move", "to": best_move})
-                    return with_msgs({"type": "wait"})
-
-        # 7. Communication pathfinding.
+        # 6. Communication pathfinding.
         if knowledge["known_wastes"]:
             comm_targets = list(knowledge["known_wastes"])
             comm_targets.sort(key=lambda t: abs(t[0] - p["position"][0]) + abs(t[1] - p["position"][1]))
@@ -524,7 +443,7 @@ class GreenAgent(RobotAgent):
             if best_move:
                 return with_msgs({"type": "move", "to": best_move})
 
-        # 8. Move randomly if nothing else to do.
+        # 7. Move randomly if nothing else to do.
         if p["allowed_moves"]:
             return with_msgs({"type": "move_random"})
         return with_msgs({"type": "wait"})

@@ -29,8 +29,8 @@ To launch the interactive SolaraViz dashboard, run:
 
     solara run server.py
 
-**2. Batch / Headless Mode:**
-To run the simulation in the terminal and output step-by-step metrics:
+**2. CLI Mode (Terminal):**
+Run the simulation in the terminal and output step-by-step metrics:
 
     python run.py --steps 100 --n-waste 30 --verbose
 
@@ -73,39 +73,23 @@ In strict accordance with the foundational properties of Multi-Agent Systems:
 
 ## 5. Interaction, Communication & Trade-offs (Lecture 3)
 
-In a hostile, radioactive environment, wireless bandwidth is highly constrained. We designed a communication protocol to address deadlocks while explicitly monitoring the trade-off between **message quantity** and **collection time**.
+In a hostile, radioactive environment, communication is limited and must stay lightweight.  
+Each agent has an `inbox` and exchanges short messages to keep the pipeline flowing without central control.
 
-### The Deadlock Problem (Resource Starvation)
-Yellow robots require 2 green-transformed wastes to create 1 red waste. If two yellow robots each hold exactly 1 waste, the system deadlocks.
+### Protocol Overview
+* **`dropped_waste` (Green/Yellow/Red):** shares drop coordinates so downstream agents can intercept waste quickly.
+* **`holding_one` (Green and Yellow):** deadlock negotiation when an agent holds exactly one unit; the lower id yields by dropping.
+* **`green_visible_targets` (Green only):** shared-target arbitration to avoid multiple green robots chasing the same waste.
+* **`disposal_zone` (Red):** one-time broadcast of discovered disposal location to other red robots.
 
-### Communication Protocol
-Agents feature an `inbox`. During the deliberation phase, they can attach outgoing `messages` to their actions, which the environment router delivers to peers.
-* **`dropped_waste`:** Agents broadcast coordinates when they drop a transformed waste at a border, enabling a seamless supply chain.
-* **`holding_one` (Negotiation):** If deadlocked, agents broadcast their unique ID. When two agents hear each other, the agent with the lower ID yields (drops its waste and blacklists the coordinate in a `yielded_wastes` memory).
+### Trade-off
+Communication reduces `time_to_clear` and run-to-run variance by reducing random wandering and deadlocks, but it increases message overhead.  
+We balance this with:
+1. **Memory pruning:** stale coordinates are removed from `known_wastes` (and from `yielded_wastes` for Green/Yellow).
+2. **Throttled deadlock signals:** `holding_one` is broadcast every 10 steps (not every step).
+3. **Targeted sharing:** `disposal_zone` is broadcast once, and green arbitration is limited to visible peers.
 
-### The Trade-off
-Communication drastically reduces the `time_to_clear` by instantly resolving deadlocks and directing agents straight to dropped wastes instead of relying on random exploration. However, this creates "garbage" on the network. To optimize this trade-off:
-1. **Memory Pruning:** Agents actively delete coordinates from their memory once a waste is collected, preventing ghost-chasing.
-2. **Throttled Broadcasting:** Agents only broadcast a `holding_one` distress signal once every 10 steps, drastically reducing network storms while maintaining high efficiency.
-
-### Green-to-Green Communication
-We introduced an optional local communication protocol between Green robots, controlled by `green_coordination`.
-
-When enabled, Green agents exchange two message types with visible Green peers:
-* `green_visible_targets`: the waste targets currently visible to the sender.
-* `green_state`: the sender position and current inventory state.
-
-This supports two coordination behaviors:
-1. **Shared-target arbitration:** if two Green agents see the same green waste, they agree on a single collector using a deterministic rule (closest robot, then agent id as tie-breaker).
-2. **Inventory merge (1+1):** if two Green agents each carry exactly one green unit, they can coordinate so one transfers its unit to the other (`transfer_green`). This creates a `2 green` inventory on one robot, allowing faster `2 green -> 1 yellow` transformation.
-
-Activation:
-* **Solara UI:** `Enable Green Coordination` checkbox (enabled by default).
-* **CLI (`run.py`):** `--green-coordination` / `--no-green-coordination`.
-* **Batch (`batch_experiments.py`):** `--green-coordination-values True,False` for comparisons (or `--green-coordination` / `--no-green-coordination` for fixed runs). When unspecified in fixed runs, default is enabled.
-
-Communication logs:
-* Enable terminal logging with `log_communications` (`--log-communications` in CLI/batch or `Log Communications in Terminal` in Solara UI).
+Green local coordination remains optional via `green_coordination` (`--green-coordination` / `--no-green-coordination`) and is active only when `use_communication` is enabled.
 
 ---
 
@@ -158,8 +142,8 @@ As illustrated in the experimental results, enabling the peer-to-peer communicat
 
 **2. The Impact of Green-to-Green Coordination**
 * **Configuration:** `--green-coordination-values True,False`
-* **Purpose:** Isolates the effect of optional local green-agent cooperation (`green_visible_targets`, `green_state`, `transfer_green`).
-* **What it proves:** Quantifies whether local arbitration and 1+1 inventory merge reduce deadlocks and improve end-to-end throughput.
+* **Purpose:** Isolates the effect of optional local green-agent cooperation (`green_visible_targets`, `holding_one`).
+* **What it proves:** Quantifies whether local arbitration and `holding_one` negotiation reduce deadlocks and improve end-to-end throughput.
 
 ![Experience 2](batch_results/exp_green_coordination/plot_time_to_clear_vs_green_coordination.png)
 

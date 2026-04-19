@@ -73,11 +73,12 @@ echo "📊 Experiment 6: Quantitative Scaling (Robots, Vision & Waste Count)"
 echo "Testing the model's scalability by varying continuous parameters."
 # Note: Lowering iterations here because combinations multiply quickly!
 python batch_experiments.py \
-    --n-waste 4,16,24,32,40,48 \
-    --n-green-robots 2,4,6,8 \
-    --n-yellow-robots 1,2,3,4 \
-    --n-red-robots 1,2,3 \
-    --vision 1,2,3 \
+    --design ofat \
+    --n-waste 4,16,24,32,40,48,56  \
+    --n-green-robots 1,2,3,4,6,8 \
+    --n-yellow-robots 1,2,3,4,5 \
+    --n-red-robots 1,2,3,4,5 \
+    --vision 1,2,3,4 \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \

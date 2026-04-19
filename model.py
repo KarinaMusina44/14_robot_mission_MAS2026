@@ -287,12 +287,16 @@ class RobotMissionModel(Model):
         return (0, 0)
 
     def step(self) -> None:
-        # Keep per-agent toggle in sync so UI parameter changes can apply live.
-        enabled = bool(getattr(self, "green_coordination", False))
+        # Keep per-agent toggles in sync so UI parameter changes can apply live.
+        communication_enabled = bool(getattr(self, "use_communication", True))
+        green_coordination_enabled = (
+            bool(getattr(self, "green_coordination", False)) and communication_enabled
+        )
         for robot in self.robot_agents:
             knowledge = getattr(robot, "knowledge", None)
             if isinstance(knowledge, dict):
-                knowledge["green_coordination"] = enabled
+                knowledge["use_communication"] = communication_enabled
+                knowledge["green_coordination"] = green_coordination_enabled
 
         robots = list(self.robot_agents)
         self.random.shuffle(robots)
@@ -373,31 +377,6 @@ class RobotMissionModel(Model):
                 inventory[src] -= count
                 inventory[dst] += 1
                 action_success = True
-
-        elif action_type == "transfer_green":
-            receiver_id = self._action_get(action, "to_id")
-            count = int(self._action_get(action, "count", 1) or 0)
-            receiver = self._robot_by_unique_id(receiver_id)
-            if (
-                isinstance(agent, GreenAgent)
-                and isinstance(receiver, GreenAgent)
-                and receiver is not agent
-                and count > 0
-                and inventory.get("green", 0) >= count
-                and self._can_transfer_between(agent, receiver)
-            ):
-                receiver_inventory = self._get_inventory(receiver)
-                inventory["green"] -= count
-                receiver_inventory["green"] += count
-                action_success = True
-                self.log_communication_event(
-                    sender=agent,
-                    message={
-                        "topic": "transfer_green",
-                        "data": {"count": count},
-                    },
-                    recipients=[receiver],
-                )
 
         elif action_type == "drop":
             waste_type = self._action_get(action, "waste")
@@ -500,17 +479,6 @@ class RobotMissionModel(Model):
             if p[0] > agent.pos[0] and self._zone_for_x(p[0]) == target_zone: # type: ignore
                 return True
         return False
-
-    def _robot_by_unique_id(self, unique_id: Any) -> Optional[RobotAgent]:
-        for robot in self.robot_agents:
-            if getattr(robot, "unique_id", None) == unique_id:
-                return robot
-        return None
-
-    def _can_transfer_between(self, sender: RobotAgent, receiver: RobotAgent) -> bool:
-        sx, sy = sender.pos # type: ignore
-        rx, ry = receiver.pos # type: ignore
-        return max(abs(sx - rx), abs(sy - ry)) <= 1
 
     def _is_disposal_cell(self, pos: Position) -> bool:
         if self.waste_disposal_pos is not None and pos == self.waste_disposal_pos:
