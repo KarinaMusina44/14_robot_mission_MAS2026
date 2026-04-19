@@ -51,7 +51,6 @@ python run.py --steps 100 --n-waste 30 --verbose
 
 `run.py` is intended for one simulation run and basic diagnostics. It currently exposes options such as:
 
-- It also includes boolean toggles to quickly enable/disable behaviors from CLI.
 - Grid and counts: `--steps`, `--width`, `--height`, `--n-robots`, `--n-green-robots`, `--n-yellow-robots`, `--n-red-robots`, `--n-waste`, `--n-green-wastes`
 - Coordination/logging: `--green-coordination` / `--no-green-coordination`, `--log-communications` / `--no-log-communications`
 - Utility: `--seed`, `--verbose`, `--report-every`, `--check-only`, `--debug-traceback`, `--model-class`
@@ -113,7 +112,7 @@ Each agent has an `inbox` and exchanges short messages to keep the pipeline flow
 ### Protocol Overview
 - **`dropped_waste` (Green/Yellow/Red):** shares drop coordinates so downstream agents can intercept waste quickly.
 - **`holding_one` (Green and Yellow):** deadlock negotiation when an agent holds exactly one unit; the lower id yields by dropping.
-  Here, a deadlock means agents are blocked in a waiting loop (for example, several agents each carry one unit and all wait for a second unit before transforming), so no one progresses.
+  Here, a deadlock means the mission cannot finish because agents are stuck : each one carries one unit, no free waste remains to pick up, and nobody can complete the next transformation step.
 - **`green_visible_targets` (Green only):** shared-target arbitration to avoid multiple green robots chasing the same waste.
 - **`disposal_zone` (Red):** one-time broadcast of discovered disposal location to other red robots.
 
@@ -128,35 +127,33 @@ We balance this with:
 
 ---
 
-## 6. Behavioral Strategies (Conceptual Configurations)
+## 6. Behavioral Strategies & Configurations Tested
 
-These are conceptual parameter settings used in analysis:
+We implemented toggles to test different evolutionary building blocks of MAS behaviors.
 
-### Strategy 1: Reactive Random Walk
+### Strategy 1: Reactive Random Walk (No Communication)
+* **Configuration:** `--use-communication False`, `--vision 1`, `--patrol-border False`
+* **Mechanism:** Robots wander randomly. Deadlocks are solved via a **Frustration Timeout**: If an agent holds 1 waste for >20 steps without finding a second, it drops the waste out of "frustration".
+* **Result:** Lowest communication overhead (0 messages), but exponentially higher `cumulative_moves` and `time_to_clear`.
 
-- **Configuration:** `use_communication=False`, `vision=1`, `patrol_border=False`
-- **Mechanism:** randomized exploration + frustration timeout (if an agent keeps exactly one unit for too long, it drops it to break waiting loops).
-- **Expected effect:** slower cleanup and higher variability in harder settings.
+### Strategy 2: Cognitive Smart Pathfinding (No Communication)
+* **Configuration:** `--use-communication False`, `--vision 3`
+* **Mechanism:** Agents use an extended vision radius to "look ahead" and use Manhattan-distance pathfinding to intercept wastes.
+* **Result:** Proves that an efficient, localized movement mechanism can compensate for a lack of communication up to a certain grid density.
 
-### Strategy 2: Higher-Vision Local Pathfinding (No Communication)
-
-- **Configuration:** `use_communication=False`, higher `vision` (for example 3)
-- **Mechanism:** better local look-ahead and target interception.
-- **Expected effect:** partial compensation for missing communication.
-
-### Strategy 3: Cooperative Pipeline
-
-- **Configuration:** `use_communication=True`, `green_coordination=True`, `use_memory=True`, `patrol_border=True`
-- **Mechanism:** local coordination, disposal-memory reuse, and proactive handoff positioning.
-- **Expected effect:** often lower time-to-clear.
+### Strategy 3: Fully Cooperative Network (Communication + Memory + Patrol)
+* **Configuration:** `--use-communication True`, `--green-coordination`, `--use-memory True`, `--patrol-border True`
+* **Mechanism:** Green agents use local coordination (`green_visible_targets` + `holding_one`) to reduce target conflicts and deadlocks. Red agents memorize the disposal zone coordinates upon discovery. Yellow/Red agents proactively navigate to and patrol the zone borders when their inventory is empty, waiting for handoffs.
+* **Result:** Highest communication overhead, but incredibly fast `time_to_clear`.
 
 ---
 
-## 7. Visualization Snapshot
+## 7. Experimental Results & Visualization
+
+Below is a snapshot of the Solara interface during an active simulation run. The custom UI dynamically renders continuous radiation zones, robot inventories (diamonds), and the disposal zone (star).
 
 ![Simulation Interface](simulation.png)
-
-*(Fig 1: Example run in the Solara interface.)*
+*(Fig 1: Simulation running at Step 35. Green agents in Z1, Yellow in Z2, Red in Z3 exploring towards the disposal star.)*
 
 ---
 
@@ -185,21 +182,19 @@ The experiment suite is executed by `run_batch.sh`, which calls `batch_experimen
 
 As illustrated in the results, enabling peer-to-peer communication improves overall system performance.
 
-- Reduced Average Time: when communication is disabled (`False`), the system relies on random exploration and frustration timeouts, giving an average clearance time around 240 steps. Enabling communication (`True`) lowers this average to just under 200 steps.
+- Reduced Average Time: when communication is disabled (`False`), the system relies on random exploration and frustration timeouts, giving an average clearance time around 280 steps. Enabling communication (`True`) lowers this average to just under 250 steps.
 - Increased Consistency: the error bars also show lower variability with communication, meaning runs are not only faster but more stable when agents can negotiate deadlocks and broadcast dropped-waste locations.
 
 ### 2) Green-to-Green Coordination
 
 - **Run config:** `--green-coordination-values True,False`
 - **Question:** does same-color arbitration reduce target conflicts?
-- **Interpretation:** effect size on mean can be small depending on the setting; variance changes are often more visible.
+- **Interpretation:** effect size on mean is small depending on the setting; variance changes are a bit more visible.
 
 ![Experience 2](batch_results/exp_green_coordination/plot_time_to_clear_vs_green_coordination.png)
 
-This experiment complements global communication tests by isolating same-color coordination in zone `z1`.
-
-- With `green_coordination=True`, visible green robots avoid pursuing the same waste target at the same time.
-- In this setup, the mean improvement is limited, but variance is smaller, which still indicates a coordination benefit in consistency.
+This experiment complements global communication tests by isolating same-color coordination in zone `z1`. With `green_coordination=True`, visible green robots avoid pursuing the same waste target at the same time.
+- In this setup, the mean improvement is not visible, but the variance is slightly smaller, which still suggests a consistency benefit from coordination. This may be because, with a limited vision range(3), this type of communication is used only rarely and, moreover, it affects only the processing of green waste. A more appropriate metric here might therefore be the time required to process green waste.
 
 ### 3) Red Agent Memory
 
@@ -211,23 +206,18 @@ This experiment complements global communication tests by isolating same-color c
 
 As in the communication experiment, enabling memory improves outcomes, with an even larger effect size.
 
-- Strong Reduction in Average Time: without memory (`False`), red agents must rediscover the disposal area repeatedly, and average completion time rises above 500 steps. With memory (`True`), the average drops near 200 steps.
+- Strong Reduction in Average Time: without memory (`False`), red agents must rediscover the disposal area repeatedly, and average completion time rises above 700 steps. With memory (`True`), the average drops near 200 steps.
 - Large Consistency Gain: variance is also much lower with memory enabled, indicating more predictable end-to-end behavior.
 
 ### 4) Border Patrol
 
 - **Run config:** `--patrol-border True,False`
 - **Question:** does proactive border waiting improve handoffs?
-- **Interpretation:** this comparison can show slower or more variable outcomes with patrol enabled; congestion/interference is a plausible hypothesis, not a proven causal mechanism.
+- **Interpretation:** In this setting, `patrol_border` does not appear to have a strong effect on performance.
 
 ![Experience 4](batch_results/exp_patrol/plot_time_to_clear_vs_patrol_border.png)
 
-Contrary to initial expectations, proactive border patrolling can reduce overall efficiency in this configuration.
-
-- Slight Increase in Average Time: without patrol (`False`), average time is around 210 steps; with patrol (`True`), it increases to around 240 steps.
-- Increased Variance: the spread also increases with patrol, indicating less predictable runs.
-
-One plausible interpretation is that forcing Yellow and Red robots to wait near borders can create local congestion or reduce opportunistic pickups deeper in their zones.
+- Enabling it slightly reduces the mean time to clear all waste, but the difference remains small compared with the variability across runs, and the error bars largely overlap. This suggests that border patrolling may provide at most a modest benefit here, rather than a clear improvement. A possible explanation is that, under this configuration, the agents already coordinate reasonably well through communication and memory, so the additional exploration structure brought by border patrolling has only a limited impact.
 
 ### 5) Initial Waste Distribution
 
@@ -239,12 +229,12 @@ One plausible interpretation is that forcing Yellow and Red robots to wait near 
 
 As expected, enabling mixed initial waste types (`multiple_wastes=True`) increases both average completion time and variability.
 
-- Increase in Average Time: homogeneous initialization (`False`) is faster on average (around 190 steps), while mixed initialization (`True`) is slower (around 300 steps).
+- Increase in Average Time: homogeneous initialization (`False`) is faster on average (around 230 steps), while mixed initialization (`True`) is slower (around 330 steps).
 - Increase in Variance: mixed starts also produce wider error bars, showing less consistent trajectories.
 
 This is consistent with a harder cold-start pipeline, where all agent types must coordinate immediately in a more complex initial state.
 
-### 6) Quantitative Scaling (OFAT)
+### 6) Quantitative Scaling 
 
 - **Run config (from `run_batch.sh`):**
 - `--design ofat`
@@ -262,21 +252,23 @@ This is a one-factor-at-a-time design around a shared anchor chosen from middle 
 ![Experience 6 Vision](batch_results/exp_scaling/plot_time_to_clear_vs_vision.png)
 ![Experience 6 Waste](batch_results/exp_scaling/plot_time_to_clear_vs_waste.png)
 
-Impact of Agent Population
 
-- Green Agents: evaluated from `1 -> 8` robots (others fixed to OFAT anchor) to estimate early-stage throughput gains and potential diminishing returns.
-- Yellow Agents: evaluated from `1 -> 5` robots to measure scaling of the intermediate transformation stage.
-- Red Agents: evaluated from `1 -> 5` robots to analyze downstream disposal bottlenecks.
+Interpretation of the scaling curves
 
-Sensory and Workload Scaling
+- Green scaling: The number of robots is beneficial only up to an intermediate point. In the first graph, adding green robots strongly improves performance from 1 to about 4 robots, with a sharp decrease in the mean time-to-clear. Beyond that point, the gain disappears and performance slightly degrades, which suggests diminishing returns and possibly congestion or redundancy between agents. In other words, once enough green robots are available, the bottleneck likely shifts to another part of the task.
 
-- Vision Radius: evaluated from `1 -> 5` to estimate the effect of local perception on search/routing efficiency.
-- Workload: evaluated from `4 -> 56` initial waste units to observe how completion time evolves with increasing load.
+- Yellow scaling: the same pattern appears for yellow robots, with the best performance around 3 robots. Adding more yellow robots beyond this point increases the mean time-to-clear, which indicates that simply increasing team size does not necessarily improve coordination. An excess of robots of one type may create interference, while the limiting factor becomes the number of robots of the other roles or the structure of the environment.
+
+- Red scaling: Same for the red ones. The plot suggests a non-monotonic effect. Increasing the number of red robots improves performance from 1 to about 3 robots, as shown by the decrease in mean time-to-clear. However, adding more red robots beyond this point does not provide further benefit and may even slightly worsen performance. 
+
+- Vision scaling: Increasing the vision radius produces a clear improvement from 1 to about 3. Beyond that point, performance stabilizes and even slightly degrades for larger values, indicating that wider perception is useful only up to a certain threshold. A plausible explanation is that once robots can already detect relevant targets efficiently, further increasing vision does not significantly improve decision-making and may instead increase redundancy or coordination overhead.
+
+- Waste scaling: as expected, higher initial waste increases mean time-to-clear.  For small to intermediate values, the time-to-clear remains relatively stable, which suggests that the system (with fixed params) can absorb a moderate increase in workload without a major loss in efficiency. However, beyond roughly 32–40 waste units, the curve rises more clearly, indicating that the system is reaching its capacity limits. In this regime, additional waste creates a heavier processing burden and the robots can no longer maintain the same level of efficiency.
 
 ### 7) Vision as Communication Fallback
 
 - **Run config:** `--vision 1,2,3,4,5 --use-communication False`
-- **Question:** how much can perception compensate when messaging is disabled?
+- **Question:** how much can perception compensate when **messaging is disabled**?
 - **Interpretation:** higher vision is associated with faster completion in this scenario.
 
 ![Experience 7](batch_results/exp_vision_no_comm/plot_time_to_clear_vs_vision.png)
@@ -292,16 +284,12 @@ This supports the idea that stronger local perception can partially compensate f
 
 - **Run config:** `--n-green-robots 10,15 --n-yellow-robots 8,12 --n-waste 16`
 - **Question:** behavior under high contention and low resources.
-- **Interpretation:** results indicate non-uniform sensitivity across agent types under crowding.
+- **Interpretation:** These results suggest a possible asymmetric effect of crowding across robot types.
 
 ![Experience 8 Green](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_green_agents.png)
 ![Experience 8 Yellow](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_yellow_agents.png)
 
-Under high-density conditions, scaling effects differ by agent type.
-
-- Green Scaling Saturation: increasing green robots from 10 to 15 has limited effect on mean time-to-clear, suggesting early-stage saturation and/or congestion.
-- Yellow Bottleneck Sensitivity: increasing yellow robots from 8 to 12 shows a much stronger improvement, consistent with yellow agents being a central throughput bottleneck.
-- Sequential Dependency: yellow throughput directly influences red-stage completion, so improvements in the middle stage propagate to end-to-end time.
+Under this highly constrained setting, increasing the number of green robots appears to worsen performance, whereas increasing the number of yellow robots seems to slightly reduce the time-to-clear. A plausible explanation is that, with only one red robot, the system becomes bottlenecked at the final processing stage: adding more upstream green robots may increase congestion and overload the downstream pipeline, while additional yellow robots may help smooth intermediate transport. However, the confidence intervals are very large and only two values were tested for each variable, so this result should be interpreted as a tentative trend rather than strong evidence.
 
 ### 9) Lone-Wolf Baseline
 
