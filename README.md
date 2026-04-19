@@ -153,7 +153,7 @@ We implemented toggles to test different evolutionary building blocks of MAS beh
 Below is a snapshot of the Solara interface during an active simulation run. The custom UI dynamically renders continuous radiation zones, robot inventories (diamonds), and the disposal zone (star).
 
 ![Simulation Interface](simulation.png)
-*(Fig 1: Simulation running at Step 35. Green agents in Z1, Yellow in Z2, Red in Z3 exploring towards the disposal star.)*
+Fig 1: Simulation running at Step 35. Green agents in Z1, Yellow in Z2, Red in Z3 exploring towards the disposal star.
 
 ---
 
