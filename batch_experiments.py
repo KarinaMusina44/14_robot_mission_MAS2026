@@ -331,11 +331,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Disable plot generation.",
     )
-    parser.add_argument(
-        "--no-log-messages",
-        action="store_true",
-        help="Disable agent message logging in the terminal.",
-    )
     return parser.parse_args()
 
 
@@ -391,7 +386,6 @@ def main() -> int:
         "patrol_border": _parse_bool_list(args.patrol_border),
         "use_communication": _parse_bool_list(args.use_communication),
         "multiple_wastes": _parse_bool_list(args.multiple_wastes),
-        "log_messages": [not args.no_log_messages],
     }
     seed_values = [args.seed_start + i for i in range(max(1, args.iterations))]
 

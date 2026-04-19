@@ -5,7 +5,6 @@ Members: Deodato V. Bastos Neto, Karina Musina
 """
 
 import random
-from matplotlib.pylab import inv
 from mesa import Agent
 
 class RobotAgent(Agent):
@@ -24,7 +23,6 @@ class RobotAgent(Agent):
         use_memory=True,
         patrol_border=True,
         use_communication=True,
-        log_messages=True,
     ):
         super().__init__(model)
         self.vision = vision
@@ -65,21 +63,7 @@ class RobotAgent(Agent):
         return False
 
     def allowed_moves(self):
-        if hasattr(self.model, "_allowed_moves_for"):
-            model_moves = self.model._allowed_moves_for(self)
-            if isinstance(model_moves, list):
-                return model_moves
-
-        neighbors = self.model.grid.get_neighborhood(
-            self.pos, moore=False, include_center=False
-        )
-
-        possible = []
-        for p in neighbors:
-            zone = self.zone_of_cell(p)
-            if zone in self.allowed_zones:
-                possible.append(p)
-        return possible
+        return self.model._allowed_moves_for(self)
 
     def has_east_neighbor_in_zone(self, target_zone):
         neighbors = self.model.grid.get_neighborhood(
@@ -203,64 +187,8 @@ class RobotAgent(Agent):
             return random.choice(best_moves)
         return None
 
-    def move_random(self, possible_moves):
-        if not possible_moves:
-            return
-        new_position = self.random.choice(possible_moves)
-        self.model.grid.move_agent(self, new_position)
-        self.pos = new_position
-
-    def apply_action(self, action):
-        """Local action execution when model.do is not implemented."""
-        inv = self.knowledge["inventory"]
-        action_type = action.get("type")
-
-        if action_type == "move_random":
-            self.move_random(self.allowed_moves())
-
-        elif action_type == "move_east":
-            moves = self.allowed_moves()
-            x = self.pos[0] # type: ignore
-            east_moves = [m for m in moves if m[0] > x]
-            if east_moves:
-                self.move_random(east_moves)
-            else:
-                self.move_random(moves)
-
-        elif action_type == "pickup":
-            waste = action["waste"]
-            inv[waste] += 1
-            if hasattr(self.model, "remove_one_waste_at"):
-                self.model.remove_one_waste_at(self.pos, waste)
-
-        elif action_type == "transform":
-            src = action["from"]
-            dst = action["to"]
-            count = action["count"]
-            if inv[src] >= count:
-                inv[src] -= count
-                inv[dst] += 1
-
-        elif action_type == "put_away":
-            waste = action["waste"]
-            if inv[waste] > 0:
-                inv[waste] -= 1
-
-        elif action_type == "drop":
-            waste = action["waste"]
-            if inv[waste] > 0:
-                inv[waste] -= 1
-                if hasattr(self.model, "add_one_waste_at"):
-                    self.model.add_one_waste_at(self.pos, waste)
-                elif hasattr(self.model, "add_waste_at"):
-                    self.model.add_waste_at(self.pos, waste)
-
     def do(self, action):
-        if hasattr(self.model, "do"):
-            return self.model.do(self, action)
-
-        self.apply_action(action)
-        return self.percepts()
+        return self.model.do(self, action)
 
     def update_knowledge(self, percepts, action=None, model_percepts=None):
         self.knowledge["last_percepts"] = percepts
@@ -305,7 +233,7 @@ class RobotAgent(Agent):
                     envelope.setdefault("from_id", self.unique_id)
                     other_agent.knowledge["inbox"].append(envelope)
                     delivered.append(other_agent)
-                if delivered and hasattr(self.model, "log_communication_event"):
+                if delivered:
                     self.model.log_communication_event(self, msg, delivered)
 
         model_percepts = self.do(action)

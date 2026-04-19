@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Group: 14
+# Date: 19 April 2026
+# Members: Deodato V. Bastos Neto, Karina Musina
+
 # Exit immediately if a command exits with a non-zero status
 set -e
 
@@ -22,7 +26,6 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_communication
 
 echo ""
@@ -33,7 +36,6 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_memory
 
 echo ""
@@ -44,7 +46,6 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_patrol
 
 echo ""
@@ -55,7 +56,6 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_multiple_wastes
 
 echo ""
@@ -71,7 +71,6 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_scaling
 
 echo ""
@@ -83,7 +82,6 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_vision_no_comm
 
 echo ""
@@ -96,7 +94,6 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_extreme_crowding
 
 echo ""
@@ -110,9 +107,8 @@ python batch_experiments.py \
     --iterations $ITERATIONS \
     --max-steps $MAX_STEPS \
     --processes $PROCESSES \
-    --no-log-messages \
     --outdir batch_results/exp_lone_wolf
 
 echo ""
 echo "✅ All experiments completed successfully!"
-echo "Check the 'batch_results' subdirectories for your CSV files and bar/line charts!"
+echo "Check the 'batch_results' subdirectories for CSV files and bar/line charts."

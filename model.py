@@ -38,7 +38,6 @@ class RobotMissionModel(Model):
         patrol_border: bool = False,
         use_communication: bool = True,
         multiple_wastes: bool = False,
-        log_messages: bool = True,
         rng: Optional[Union[int, np.random.Generator]] = None,
         seed: Optional[int] = None,
     ) -> None:
@@ -59,7 +58,6 @@ class RobotMissionModel(Model):
         self.patrol_border = patrol_border
         self.use_communication = use_communication
         self.multiple_wastes = multiple_wastes
-        self.log_messages = log_messages
 
         self.radioactivity_agents: List[Radioactivity] = []
         self.waste_agents: List[Waste] = []
@@ -264,7 +262,6 @@ class RobotMissionModel(Model):
             use_memory=self.use_memory,
             patrol_border=self.patrol_border,
             use_communication=self.use_communication,
-            log_messages=self.log_messages,
         )
         pos = self._random_position_in_zones(
             robot.allowed_zones, avoid_robot_occupied=True
