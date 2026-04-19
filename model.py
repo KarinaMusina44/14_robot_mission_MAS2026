@@ -32,7 +32,7 @@ class RobotMissionModel(Model):
         n_yellow_robots: int = 2,
         n_red_robots: int = 1,
         vision: int = 1,
-        green_coordination: bool = False,
+        green_coordination: bool = True,
         log_communications: bool = False,
         use_memory: bool = True,
         patrol_border: bool = False,

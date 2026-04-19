@@ -100,9 +100,9 @@ This supports two coordination behaviors:
 2. **Inventory merge (1+1):** if two Green agents each carry exactly one green unit, they can coordinate so one transfers its unit to the other (`transfer_green`). This creates a `2 green` inventory on one robot, allowing faster `2 green -> 1 yellow` transformation.
 
 Activation:
-* **Solara UI:** `Enable Green Coordination` checkbox.
+* **Solara UI:** `Enable Green Coordination` checkbox (enabled by default).
 * **CLI (`run.py`):** `--green-coordination` / `--no-green-coordination`.
-* **Batch (`batch_experiments.py`):** `--green-coordination` / `--no-green-coordination`.
+* **Batch (`batch_experiments.py`):** `--green-coordination-values True,False` for comparisons (or `--green-coordination` / `--no-green-coordination` for fixed runs). When unspecified in fixed runs, default is enabled.
 
 Communication logs:
 * Enable terminal logging with `log_communications` (`--log-communications` in CLI/batch or `Log Communications in Terminal` in Solara UI).
@@ -141,7 +141,7 @@ Below is a snapshot of the Solara interface during an active simulation run. The
 
 ## 8. Batch Experiments Summary & Test Scenarios
 
-Our automated suite (`batch_experiments.py`) and bash script (`run_experiments.sh`) are used to quantitatively evaluate our criteria. Tests included:
+Our automated suite (`batch_experiments.py`) and bash script (`run_batch.sh`) are used to quantitatively evaluate our criteria. Tests included:
 
 **1. The Impact of Communication (Peer-to-Peer Network)**
 * **Configuration:** `--use-communication True` vs. `--use-communication False`
@@ -156,12 +156,21 @@ As illustrated in the experimental results, enabling the peer-to-peer communicat
 
 * Increased Consistency: It is also highly relevant to note the variance in the data. The error bars demonstrate that enabling communication noticeably reduces the standard deviation of the completion time. This indicates that the agents are not only faster but also much more consistent and reliable when they can actively negotiate deadlocks and broadcast dropped waste locations.
 
-**2. The Impact of Red Agent Memory (Cognitive Mapping)**
+**2. The Impact of Green-to-Green Coordination**
+* **Configuration:** `--green-coordination-values True,False`
+* **Purpose:** Isolates the effect of optional local green-agent cooperation (`green_visible_targets`, `green_state`, `transfer_green`).
+* **What it proves:** Quantifies whether local arbitration and 1+1 inventory merge reduce deadlocks and improve end-to-end throughput.
+
+![Experience 2](batch_results/exp_green_coordination/plot_time_to_clear_vs_green_coordination.png)
+
+This experiment complements global communication tests by isolating same-color cooperation in zone `z1`.
+
+**3. The Impact of Red Agent Memory (Cognitive Mapping)**
 * **Configuration:** `--use-memory True` vs. `--use-memory False`
 * **Purpose:** Tests the difference between a purely reactive Red Agent (wanders aimlessly until it bumps into the disposal zone) and a cognitive Red Agent (memorizes the disposal coordinates upon first discovery and walks straight to it).
 * **What it proves:** Demonstrates how simple localized memory reduces unnecessary `cumulative_moves` and accelerates the final stage of the supply chain.
 
-![Experience 2](batch_results/exp_memory/plot_time_to_clear_vs_use_memory.png)
+![Experience 3](batch_results/exp_memory/plot_time_to_clear_vs_use_memory.png)
 
 Similar to the communication experiment, enabling cognitive memory for the agents yields significant improvements, but the magnitude of this effect is substantially larger.
 
@@ -169,12 +178,12 @@ Similar to the communication experiment, enabling cognitive memory for the agent
 
 * Massive Improvement in Consistency: The most striking takeaway from this experiment is the variance. The error bar for the system without memory is enormous, indicating highly unpredictable runs that can sometimes take well over 700 steps to complete. By contrast, the error bar with memory enabled is very small, proving that cognitive mapping makes the supply chain highly reliable and consistent.
 
-**3. The Impact of Border Patrol (Proactive vs. Reactive)**
+**4. The Impact of Border Patrol (Proactive vs. Reactive)**
 * **Configuration:** `--patrol-border True` vs. `--patrol-border False`
 * **Purpose:** When a Yellow or Red agent has an empty inventory, do they wander their zone randomly (False), or do they proactively walk to the western border of their zone and patrol up and down waiting for a handoff (True)?
 * **What it proves:** Shows how anticipating the needs of the supply chain (moving to where the waste *will* be) optimizes the flow of resources between zones.
 
-![Experience 3  ](batch_results/exp_patrol/plot_time_to_clear_vs_patrol_border.png)
+![Experience 4](batch_results/exp_patrol/plot_time_to_clear_vs_patrol_border.png)
 
 Contrary to initial expectations, implementing proactive border patrolling behavior yields a negative impact on the system's overall efficiency.
 
@@ -184,12 +193,12 @@ Contrary to initial expectations, implementing proactive border patrolling behav
 
 This surprising result suggests that forcing Yellow and Red agents to proactively wait at their western borders might actually lead to unforeseen inefficiencies. It is highly likely that this behavior causes pathfinding congestion at the borders, or prevents agents from opportunistically discovering and transporting wastes scattered deeper within their respective zones.
 
-**4. Initial Waste Distribution (System Bootstrapping)**
+**5. Initial Waste Distribution (System Bootstrapping)**
 * **Configuration:** `--multiple-wastes True` vs. `--multiple-wastes False`
 * **Purpose:** Tests two different starting states. `False` forces the system to start from scratch (all Green wastes in Z1). `True` pre-scatters a mathematically safe mix of Green, Yellow, and Red wastes across all three zones at step 0.
 * **What it proves:** Evaluates how the MAS handles "cold starts" (where Yellow and Red robots sit idle initially) versus "hot starts" (where all robots have immediate work).
 
-![Experience 4](batch_results/exp_multiple_wastes/plot_time_to_clear_vs_multiple_wastes.png)
+![Experience 5](batch_results/exp_multiple_wastes/plot_time_to_clear_vs_multiple_wastes.png)
 
 As anticipated, increasing the diversity of the initial waste distribution (`multiple_wastes = True`) significantly increases both the average time to clear the environment and the variance across simulation runs. 
 
@@ -198,16 +207,16 @@ As anticipated, increasing the diversity of the initial waste distribution (`mul
 
 This outcome aligns with expectations, as a scattered and diverse initial state forces all agent types to coordinate and resolve complex pathfinding or deadlock scenarios simultaneously right from the start, rather than following a predictable, phased supply chain flow.
 
-**5. Quantitative Scaling (Robots, Vision & Waste Count)**
+**6. Quantitative Scaling (Robots, Vision & Waste Count)**
 * **Configuration:** Varies `n-waste` (16, 32, 48), `n-green-robots` (2, 4, 6), `n-yellow-robots` (1, 2, 4), `n-red-robots` (1, 2), and `vision` (1, 2, 3) simultaneously.
 * **Purpose:** A massive combinatorial test to see how the system scales.
 * **What it proves:** Generates the line charts. It helps identify the "sweet spot" of efficiency—proving that adding more robots makes the system faster, but only up to a certain point before diminishing returns hit.
 
-![Experience 5 Green](batch_results/exp_scaling/plot_time_to_clear_vs_green_agents.png)
-![Experience 5 Yellow](batch_results/exp_scaling/plot_time_to_clear_vs_yellow_agents.png)
-![Experience 5 Red](batch_results/exp_scaling/plot_time_to_clear_vs_red_agents.png)
-![Experience 5 Vision](batch_results/exp_scaling/plot_time_to_clear_vs_vision.png)
-![Experience 5 Waste](batch_results/exp_scaling/plot_time_to_clear_vs_waste.png)
+![Experience 6 Green](batch_results/exp_scaling/plot_time_to_clear_vs_green_agents.png)
+![Experience 6 Yellow](batch_results/exp_scaling/plot_time_to_clear_vs_yellow_agents.png)
+![Experience 6 Red](batch_results/exp_scaling/plot_time_to_clear_vs_red_agents.png)
+![Experience 6 Vision](batch_results/exp_scaling/plot_time_to_clear_vs_vision.png)
+![Experience 6 Waste](batch_results/exp_scaling/plot_time_to_clear_vs_waste.png)
 
 Impact of Agent Population
 * Green Agents: Increasing the number of green robots from 2 to 6 shows a steady decrease in mean clearing time, dropping from over 200 steps to approximately 120 steps. However, the rate of improvement slows as the population grows, suggesting diminishing returns once the initial stage of the supply chain is saturated.
@@ -221,12 +230,12 @@ Sensory and Workload Scaling
 
 * Workload Scalability: The system demonstrates excellent stability under varying workloads. The mean time to clear all waste increases in a strictly linear manner as the number of initial waste units scales from 16 to 48. This linear growth proves that the MAS architecture avoids exponential bottlenecks, making it a reliable solution for larger-scale hazardous cleanup operations.
 
-**6. Vision as a Communication Fallback**
+**7. Vision as a Communication Fallback**
 * **Configuration:** `--vision 1,3,5` with `--use-communication False` locked in.
 * **Purpose:** If the radioactive environment completely jams the wireless network, can we compensate by giving the robots better optical sensors?
 * **What it proves:** Tests if a high vision radius (allowing robots to visually spot deadlocks or dropped wastes from afar) can achieve the same `time_to_clear` as the wireless network.
 
-![Experience 6](batch_results/exp_vision_no_comm/plot_time_to_clear_vs_vision.png)
+![Experience 7](batch_results/exp_vision_no_comm/plot_time_to_clear_vs_vision.png)
 
 As expected, expanding the sensory capabilities of the agents by increasing their vision radius significantly reduces both the mean time to clear the environment and the variance across simulation runs. 
 
@@ -235,13 +244,13 @@ As expected, expanding the sensory capabilities of the agents by increasing thei
 
 This experiment perfectly validates the "Cognitive Smart Pathfinding" strategy. It proves that allowing agents to "look ahead" over a wider radius serves as a powerful, autonomous fallback mechanism capable of achieving high efficiency even when wireless network communication is jammed or unavailable.
 
-**7. Extreme Crowding & Deadlock Stress Test**
+**8. Extreme Crowding & Deadlock Stress Test**
 * **Configuration:** High robot counts (`n-green` 10-15, `n-yellow` 8-12) paired with very low waste (`n-waste` 16).
 * **Purpose:** Creates a scenario of severe resource starvation. With 15 green robots fighting over 16 wastes, deadlocks are mathematically guaranteed to happen constantly.
 * **What it proves:** Acts as a stress test for the ID-based Yielding protocol. It proves that the negotiation logic is robust enough to untangle massive traffic jams without breaking.
 
-![Experience 7 Green](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_green_agents.png)
-![Experience 7 Yellow](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_yellow_agents.png)
+![Experience 8 Green](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_green_agents.png)
+![Experience 8 Yellow](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_yellow_agents.png)
 
 The stress tests conducted under high-density conditions reveal a critical disparity in how scaling specific agent types affects the total "time-to-clear".
 
@@ -251,12 +260,12 @@ The stress tests conducted under high-density conditions reveal a critical dispa
 
 * Sequential Dependency: This sensitivity exists because yellow agents represent a central bottleneck in the transformation chain. They cannot begin their primary task until green agents have provided sufficient input, and their output is required for red agents to finalize the cleanup. Increasing the throughput of this intermediate stage directly accelerates the entire sequential process.
 
-**8. The "Lone Wolf" Baseline**
+**9. The "Lone Wolf" Baseline**
 * **Configuration:** Exactly 1 Green, 1 Yellow, and 1 Red robot, scaling the waste from 16 to 64.
 * **Purpose:** Removes all peer-to-peer interactions (since there are no peers of the same color to deadlock with or talk to).
 * **What it proves:** Establishes the absolute baseline efficiency of the supply chain mechanics. Every other experiment can be compared against this to isolate feature improvements.
 
-![Experience 8](batch_results/exp_lone_wolf/plot_time_to_clear_vs_waste.png)
+![Experience 9](batch_results/exp_lone_wolf/plot_time_to_clear_vs_waste.png)
 
 As expected, increasing the total number of initial waste units leads to a proportional increase in the mean time required to clear the environment. 
 

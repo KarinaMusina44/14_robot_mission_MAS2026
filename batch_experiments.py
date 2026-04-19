@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 from typing import List, Any
 import math
+import textwrap
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
@@ -87,6 +88,7 @@ def _fixed_values_label(fixed_values: dict[str, Any]) -> str:
         "n_yellow_robots": "yellow",
         "n_waste": "waste",
         "vision": "vision",
+        "green_coordination": "green_coord",
         "use_memory": "memory",
         "patrol_border": "patrol",
         "use_communication": "comm",
@@ -94,6 +96,15 @@ def _fixed_values_label(fixed_values: dict[str, Any]) -> str:
     }
     parts = [f"{display_names.get(col, col)}={value}" for col, value in fixed_values.items()]
     return ", ".join(parts)
+
+
+def _wrapped_fixed_values_label(fixed_values: dict[str, Any], width: int = 52) -> str:
+    return textwrap.fill(
+        _fixed_values_label(fixed_values),
+        width=width,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
 
 
 def _aggregate_time_by_agent_count(
@@ -164,7 +175,12 @@ def _save_time_vs_agent_count_plot(
     ax.set_xlabel(x_label)
     ax.set_ylabel("mean_time_to_clear_all_waste")
     ax.set_ylim(bottom=0)
-    ax.set_title(f"Time-to-Clear vs {x_label}\nfixed: {_fixed_values_label(fixed_values)}")
+    wrapped_fixed = _wrapped_fixed_values_label(fixed_values)
+    ax.set_title(
+        f"Time-to-Clear vs {x_label}\nfixed: {wrapped_fixed}",
+        fontsize=10,
+        pad=10,
+    )
     ax.grid(alpha=0.3)
     ax.legend()
     fig.tight_layout()
@@ -192,7 +208,12 @@ def _save_time_vs_bool_plot(
     ax.bar(x, y, yerr=std, capsize=5, color=["#E63946", "#2A9D8F"][:len(x)], alpha=0.9)
     ax.set_xlabel(bool_col)
     ax.set_ylabel("mean_time_to_clear_all_waste")
-    ax.set_title(f"Time-to-Clear vs {bool_col}\nfixed: {_fixed_values_label(fixed_values)}")
+    wrapped_fixed = _wrapped_fixed_values_label(fixed_values)
+    ax.set_title(
+        f"Time-to-Clear vs {bool_col}\nfixed: {wrapped_fixed}",
+        fontsize=10,
+        pad=10,
+    )
     ax.grid(axis='y', alpha=0.3)
     fig.tight_layout()
     fig.savefig(plot_path, dpi=150)
@@ -236,18 +257,24 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated values for robot vision radius.",
     )
     parser.add_argument(
+        "--green-coordination-values",
+        type=str,
+        default=None,
+        help="Comma-separated boolean values (True/False) for green-to-green coordination in batch comparisons.",
+    )
+    parser.add_argument(
         "--green-coordination",
         dest="green_coordination",
         action="store_true",
-        help="Enable communication/coordination between visible green robots.",
+        help="Enable green-to-green coordination for a single fixed batch configuration.",
     )
     parser.add_argument(
         "--no-green-coordination",
         dest="green_coordination",
         action="store_false",
-        help="Disable communication/coordination between visible green robots.",
+        help="Disable green-to-green coordination for a single fixed batch configuration.",
     )
-    parser.set_defaults(green_coordination=False)
+    parser.set_defaults(green_coordination=None)
     parser.add_argument(
         "--log-communications",
         dest="log_communications",
@@ -372,6 +399,13 @@ def main() -> int:
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    if args.green_coordination_values is not None:
+        green_coordination_values = _parse_bool_list(args.green_coordination_values)
+    elif args.green_coordination is None:
+        green_coordination_values = [True]
+    else:
+        green_coordination_values = [bool(args.green_coordination)]
+
     parameters = {
         "width": [args.width],
         "height": [args.height],
@@ -380,7 +414,7 @@ def main() -> int:
         "n_yellow_robots": _parse_int_list(args.n_yellow_robots),
         "n_red_robots": _parse_int_list(args.n_red_robots),
         "vision": _parse_vision_values(args.vision),
-        "green_coordination": [args.green_coordination],
+        "green_coordination": green_coordination_values,
         "log_communications": [args.log_communications],
         "use_memory": _parse_bool_list(args.use_memory),
         "patrol_border": _parse_bool_list(args.patrol_border),
@@ -476,6 +510,7 @@ def main() -> int:
         "n_yellow_robots": _pick_reference_value(parameters["n_yellow_robots"]),
         "n_waste": _pick_reference_value(parameters["n_waste"]),
         "vision": _pick_reference_value(parameters["vision"]),
+        "green_coordination": parameters["green_coordination"][0],
         "use_memory": parameters["use_memory"][0],
         "patrol_border": parameters["patrol_border"][0],
         "use_communication": parameters["use_communication"][0],
@@ -539,7 +574,13 @@ def main() -> int:
             print(f"Saved plot: {plot_path}")
 
     # Generate categorical bar plots for boolean toggles
-    bool_cols = ["use_memory", "patrol_border", "use_communication", "multiple_wastes"]
+    bool_cols = [
+        "green_coordination",
+        "use_memory",
+        "patrol_border",
+        "use_communication",
+        "multiple_wastes",
+    ]
     for col in bool_cols:
         if len(set(parameters[col])) > 1:  # Only plot if we passed multiple bool values
             fixed_values = {k: v for k, v in reference_values.items() if k != col}
