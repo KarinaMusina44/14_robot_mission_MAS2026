@@ -2,47 +2,87 @@
 
 **Group:** 14  
 **Date:** 16 March 2026  
-**Members:** Deodato V. Bastos Neto, Karina Musina  
+**Members:** Deodato V. Bastos Neto, Karina Musina
 
 ---
 
 ## 1. Overview and Objectives
-This project is an Agent-Based Model (ABM) developed to simulate a distributed, multi-agent system where autonomous robots must cooperate to clean a hostile, radioactive environment. 
 
-The environment is decomposed into three zones (from west to east): Z1 (low radioactivity), Z2 (medium radioactivity), and Z3 (high radioactivity). Three types of robots (Green, Yellow, Red) are restricted to specific zones and must collect, transform, and transport waste eastward to a final disposal zone.
+This project is an Agent-Based Model (ABM) of a distributed multi-agent system where autonomous robots cooperate to clean a hostile radioactive environment.
 
-**Complex Problem & Objectives:** The challenge is to orchestrate a multi-stage supply chain without centralized control. The objective is to evaluate whether our MAS architecture effectively and efficiently solves this problem.
-**Criterion of Evaluation:** The relevance and satisfaction of our proposed behavioral models are evaluated using a strict trade-off metric: **Total Time to Clear (`time_to_clear`) vs. Communication/Energy Overhead (Number of messages exchanged and `cumulative_moves`)**.
+The grid is decomposed into three west-to-east zones: Z1 (low radioactivity), Z2 (medium), Z3 (high). Three robot types (Green, Yellow, Red) are zone-constrained and must collect, transform, and transport waste toward a final disposal zone.
+
+**Primary objective:** clear all waste as fast as possible.
+
+Our primary metric is `time_to_clear` per run (first step where system waste reaches zero), and the analysis is centered on reducing this value.
+
+**Secondary preferences:**
+
+- Avoid saturating communication channels when possible.
+- Prefer configurations with fewer robots at equal `time_to_clear` (lower budget needs), even if we consider budget extensible overall.
+
+**Tracked but not primary metric:**
+
+- `cumulative_moves` (overall and per color) is recorded, and can be relevant as a proxy for travel energy/fuel, but it is not the primary KPI and is not the focus of the final analysis.
 
 ---
 
-## 2. Requirements & Running the Simulation
+## 2. Requirements and Execution
 
 ### Prerequisites
-The project relies on Python 3+ and the Mesa framework with Solara for visualization.
 
-    pip install mesa solara matplotlib pandas
+Install Python dependencies:
 
-### Execution
-**1. Visual Mode (Web Interface):**
-To launch the interactive SolaraViz dashboard, run:
+```bash
+pip install mesa solara matplotlib pandas
+```
 
-    solara run server.py
+### A. Visual Mode (Solara UI)
 
-**2. Automated Experiments (Batch Mode):**
-To run the evaluation suite across multiple configurations and generate comparative performance graphs:
+```bash
+solara run server.py
+```
 
-    ./run_experiments.sh
+### B. Single Run CLI (`run.py`)
+
+```bash
+python run.py --steps 100 --n-waste 30 --verbose
+```
+
+`run.py` is intended for one simulation run and basic diagnostics. It currently exposes options such as:
+
+- Grid and counts: `--steps`, `--width`, `--height`, `--n-robots`, `--n-green-robots`, `--n-yellow-robots`, `--n-red-robots`, `--n-waste`, `--n-green-wastes`
+- Coordination/logging: `--green-coordination` / `--no-green-coordination`, `--log-communications` / `--no-log-communications`
+- Utility: `--seed`, `--verbose`, `--report-every`, `--check-only`, `--debug-traceback`, `--model-class`
+
+### C. Batch Experiments (`batch_experiments.py` / `run_batch.sh`)
+
+Run the full experiment suite:
+
+```bash
+./run_batch.sh
+```
+
+Or run the batch runner directly:
+
+```bash
+python batch_experiments.py --help
+```
+
+`batch_experiments.py` is the script that exposes experimental toggles such as `--use-communication`, `--use-memory`, `--patrol-border`, `--multiple-wastes`, and `--vision` sweeps.
+
 
 ---
 
-## 3. Theoretical Framework & M&S Scope (Lecture 2)
+## 3. Theoretical Framework and M&S Scope (Lecture 2)
 
-Following the Modeling & Simulation (M&S) theory principles:
-* **Source System:** A hazardous waste management facility requiring specialized, decentralized robotic handling due to high radiation destroying centralized communication arrays.
-* **Experimental Frame:** We observe the system's efficiency by measuring the time required to achieve a completely clean grid (0 wastes left). We alter conditions (communication enabled/disabled, vision radius, robot counts) to measure the impact on this clearing time.
-* **Model:** The `RobotMissionModel` acts as the physical universe, managing the spatial grid (`MultiGrid`), enforcing movement constraints, and safely applying the consequences of actions (e.g., dropping waste, transforming).
-* **Simulator:** Handled by the Mesa framework's discrete-time execution engine (`RandomActivation` scheduler).
+Following Modeling and Simulation (M&S) theory principles:
+
+- **Source System:** a hazardous waste logistics process where tasks are sequential (collect, transform, handoff, dispose) and must be solved under radiation and zone constraints.
+- **Experimental Frame:** evaluate how behavior toggles (communication, coordination, memory, patrol, sensing range, and robot counts) change cleanup speed.
+- **Model:** `RobotMissionModel` represents the environment (`MultiGrid`), zone restrictions, action rules (`move`, `pickup`, `transform`, `drop`, `put_away`), and inter-agent message exchange.
+- **Simulator:** Mesa executes the model in discrete time, with repeated runs under controlled parameter settings to compare strategies.
+
 
 ---
 
@@ -51,33 +91,39 @@ Following the Modeling & Simulation (M&S) theory principles:
 In strict accordance with the foundational properties of Multi-Agent Systems:
 
 ### Environment Properties
-* **Partially Observable:** Robots do not possess a global map. They rely on local views, perceiving only their current cell and a limited radius of visible tiles. 
-* **Dynamic:** The environment changes due to processes beyond a single agent's control as other agents continuously modify the distribution of waste.
-* **Discrete:** Space is a 2D grid; time advances in discrete step intervals.
-* **Decentralized:** There is no global master, planner, or "God-view" orchestrating the cleanup.
+
+- **Partially Observable:** Robots do not possess a global map. They rely on local views, perceiving only their current cell and a limited radius of visible tiles.
+- **Dynamic:** The environment changes due to processes beyond a single agent's control as other agents continuously modify the distribution of waste.
+- **Discrete:** Space is a 2D grid; time advances in discrete step intervals.
+- **Decentralized:** There is no global master, planner, or "God-view" orchestrating the cleanup.
 
 ### Agent Properties
-* **Autonomy:** Each robot operates independently, maintaining its own internal `knowledge` base and deciding its next action via a strict procedural loop: *percepts -> deliberate -> do*.
-* **Loosely Coupled:** Agents do not share memory or access each other's code. Interaction is limited to physical environment modification (stigmergy) or explicit, limited message passing.
+
+- **Autonomy:** Each robot operates independently, maintaining its own internal `knowledge` base and deciding its next action via a strict procedural loop: *percepts -> deliberate -> do*.
+- **Loosely Coupled:** Agents do not share memory or access each other's code. Interaction is limited to physical environment modification (stigmergy) or explicit, limited message passing.
 
 ---
 
 ## 5. Interaction, Communication & Trade-offs (Lecture 3)
 
-In a hostile, radioactive environment, wireless bandwidth is highly constrained. We designed a communication protocol to address deadlocks while explicitly monitoring the trade-off between **message quantity** and **collection time**.
+In a hostile, radioactive environment, communication is limited and must stay lightweight.  
+Each agent has an `inbox` and exchanges short messages to keep the pipeline flowing without central control.
 
-### The Deadlock Problem (Resource Starvation)
-Yellow robots require 2 green-transformed wastes to create 1 red waste. If two yellow robots each hold exactly 1 waste, the system deadlocks.
+### Protocol Overview
+- **`dropped_waste` (Green/Yellow/Red):** shares drop coordinates so downstream agents can intercept waste quickly.
+- **`holding_one` (Green and Yellow):** deadlock negotiation when an agent holds exactly one unit; the lower id yields by dropping.
+  Here, a deadlock means the mission cannot finish because agents are stuck : each one carries one unit, no free waste remains to pick up, and nobody can complete the next transformation step.
+- **`green_visible_targets` (Green only):** shared-target arbitration to avoid multiple green robots chasing the same waste.
+- **`disposal_zone` (Red):** one-time broadcast of discovered disposal location to other red robots.
 
-### Communication Protocol
-Agents feature an `inbox`. During the deliberation phase, they can attach outgoing `messages` to their actions, which the environment router delivers to peers.
-* **`dropped_waste`:** Agents broadcast coordinates when they drop a transformed waste at a border, enabling a seamless supply chain.
-* **`holding_one` (Negotiation):** If deadlocked, agents broadcast their unique ID. When two agents hear each other, the agent with the lower ID yields (drops its waste and blacklists the coordinate in a `yielded_wastes` memory).
+Frustration mechanism (fallback): when communication/negotiation does not unblock the situation, an agent that has been holding one unit for too long drops it, so the pipeline can move again instead of staying stuck.
 
-### The Trade-off
-Communication drastically reduces the `time_to_clear` by instantly resolving deadlocks and directing agents straight to dropped wastes instead of relying on random exploration. However, this creates "garbage" on the network. To optimize this trade-off:
-1. **Memory Pruning:** Agents actively delete coordinates from their memory once a waste is collected, preventing ghost-chasing.
-2. **Throttled Broadcasting:** Agents only broadcast a `holding_one` distress signal once every 10 steps, drastically reducing network storms while maintaining high efficiency.
+### Trade-off
+Communication reduces `time_to_clear` and run-to-run variance by reducing random wandering and deadlocks, but it increases message overhead.  
+We balance this with:
+1. **Memory pruning:** stale coordinates are removed from `known_wastes` (and from `yielded_wastes` for Green/Yellow).
+2. **Throttled deadlock signals:** `holding_one` is broadcast every 10 steps (not every step).
+3. **Targeted sharing:** `disposal_zone` is broadcast once, and green arbitration is limited to visible peers.
 
 ---
 
@@ -96,8 +142,8 @@ We implemented toggles to test different evolutionary building blocks of MAS beh
 * **Result:** Proves that an efficient, localized movement mechanism can compensate for a lack of communication up to a certain grid density.
 
 ### Strategy 3: Fully Cooperative Network (Communication + Memory + Patrol)
-* **Configuration:** `--use-communication True`, `--use-memory True`, `--patrol-border True`
-* **Mechanism:** Red agents memorize the disposal zone coordinates upon discovery. Yellow/Red agents proactively navigate to and patrol the zone borders when their inventory is empty, waiting for handoffs.
+* **Configuration:** `--use-communication True`, `--green-coordination`, `--use-memory True`, `--patrol-border True`
+* **Mechanism:** Green agents use local coordination (`green_visible_targets` + `holding_one`) to reduce target conflicts and deadlocks. Red agents memorize the disposal zone coordinates upon discovery. Yellow/Red agents proactively navigate to and patrol the zone borders when their inventory is empty, waiting for handoffs.
 * **Result:** Highest communication overhead, but incredibly fast `time_to_clear`.
 
 ---
@@ -107,132 +153,153 @@ We implemented toggles to test different evolutionary building blocks of MAS beh
 Below is a snapshot of the Solara interface during an active simulation run. The custom UI dynamically renders continuous radiation zones, robot inventories (diamonds), and the disposal zone (star).
 
 ![Simulation Interface](simulation.png)
-*(Fig 1: Simulation running at Step 35. Green agents in Z1, Yellow in Z2, Red in Z3 exploring towards the disposal star.)*
+Fig 1: Simulation running at Step 35. Green agents in Z1, Yellow in Z2, Red in Z3 exploring towards the disposal star.
 
 ---
 
-## 8. Batch Experiments Summary & Test Scenarios
+## 8. Batch Experiments and Interpretation
 
-Our automated suite (`batch_experiments.py`) and bash script (`run_experiments.sh`) are used to quantitatively evaluate our criteria. Tests included:
+The experiment suite is executed by `run_batch.sh`, which calls `batch_experiments.py` with explicit parameter ranges.
 
-**1. The Impact of Communication (Peer-to-Peer Network)**
-* **Configuration:** `--use-communication True` vs. `--use-communication False`
-* **Purpose:** Compares the advanced "Negotiation Protocol" (agents sharing unique IDs to resolve deadlocks) against the basic "Frustration Timeout" (blindly dropping waste after 20 steps of wandering).
-* **What it proves:** Measures the exact time saved by allowing robots to talk, highlighting the trade-off between generating network "garbage" (messages) and drastically reducing the `time_to_clear`.
+### Methodology Clarifications
+
+- Batch outputs are written per experiment directory.
+- Each configuration is repeated on 20 seeds (`0` to `19`) before aggregation.
+- We mainly use a one-factor-at-a-time logic: one parameter varies while others are held fixed to isolate its effect.
+- Exception: Experiment 8 is an intentional stress test where `n-green-robots` and `n-yellow-robots` vary together.
+- `time_to_clear_all_waste` is extracted per run from the batch trajectories.
+- Plot uncertainty conventions:
+- Line plots (quantitative sweeps): mean with **95% confidence interval**.
+- Boolean bar plots: mean with **standard deviation** error bars.
+
+### 1) Impact of Communication
+
+- **Run config:** `--use-communication True,False`
+- **Question:** does explicit messaging improve throughput?
+- **Interpretation:** in these runs, enabling communication is associated with lower mean time-to-clear.
 
 ![Experience 1](batch_results/exp_communication/plot_time_to_clear_vs_use_communication.png)
 
-As illustrated in the experimental results, enabling the peer-to-peer communication protocol significantly improves the overall performance of the multi-agent system.
+As illustrated in the results, enabling peer-to-peer communication improves overall system performance.
 
-* Reduced Average Time: When communication is disabled (False), the system relies on random exploration and frustration timeouts, resulting in an average clearance time of approximately 240 steps. Enabling communication (True) reduces this average time to just under 200 steps.
+- Reduced Average Time: when communication is disabled (`False`), the system relies on random exploration and frustration timeouts, giving an average clearance time around 280 steps. Enabling communication (`True`) lowers this average to just under 250 steps.
+- Increased Consistency: the error bars also show lower variability with communication, meaning runs are not only faster but more stable when agents can negotiate deadlocks and broadcast dropped-waste locations.
 
-* Increased Consistency: It is also highly relevant to note the variance in the data. The error bars demonstrate that enabling communication noticeably reduces the standard deviation of the completion time. This indicates that the agents are not only faster but also much more consistent and reliable when they can actively negotiate deadlocks and broadcast dropped waste locations.
+### 2) Green-to-Green Coordination
 
-**2. The Impact of Red Agent Memory (Cognitive Mapping)**
-* **Configuration:** `--use-memory True` vs. `--use-memory False`
-* **Purpose:** Tests the difference between a purely reactive Red Agent (wanders aimlessly until it bumps into the disposal zone) and a cognitive Red Agent (memorizes the disposal coordinates upon first discovery and walks straight to it).
-* **What it proves:** Demonstrates how simple localized memory reduces unnecessary `cumulative_moves` and accelerates the final stage of the supply chain.
+- **Run config:** `--green-coordination-values True,False`
+- **Question:** does same-color arbitration reduce target conflicts?
+- **Interpretation:** effect size on mean is small depending on the setting; variance changes are a bit more visible.
 
-![Experience 2](batch_results/exp_memory/plot_time_to_clear_vs_use_memory.png)
+![Experience 2](batch_results/exp_green_coordination/plot_time_to_clear_vs_green_coordination.png)
 
-Similar to the communication experiment, enabling cognitive memory for the agents yields significant improvements, but the magnitude of this effect is substantially larger.
+This experiment complements global communication tests by isolating same-color coordination in zone `z1`. With `green_coordination=True`, visible green robots avoid pursuing the same waste target at the same time.
+- In this setup, the mean improvement is not visible, but the variance is slightly smaller, which still suggests a consistency benefit from coordination. This may be because, with a limited vision range(3), this type of communication is used only rarely and, moreover, it affects only the processing of green waste. A more appropriate metric here might therefore be the time required to process green waste.
 
-* Dramatic Reduction in Average Time: When Red agents lack memory (False) and must rely on random exploration to find the disposal zone, the average time to clear the environment skyrockets to over 500 steps. Enabling memory (True), which allows them to map and navigate directly to the disposal zone upon discovery, drastically cuts the average completion time down to roughly 200 steps.
+### 3) Red Agent Memory
 
-* Massive Improvement in Consistency: The most striking takeaway from this experiment is the variance. The error bar for the system without memory is enormous, indicating highly unpredictable runs that can sometimes take well over 700 steps to complete. By contrast, the error bar with memory enabled is very small, proving that cognitive mapping makes the supply chain highly reliable and consistent.
+- **Run config:** `--use-memory True,False`
+- **Question:** does remembering disposal location reduce search overhead?
+- **Interpretation:** memory-enabled settings are associated with lower mean completion time in the shown runs.
 
-**3. The Impact of Border Patrol (Proactive vs. Reactive)**
-* **Configuration:** `--patrol-border True` vs. `--patrol-border False`
-* **Purpose:** When a Yellow or Red agent has an empty inventory, do they wander their zone randomly (False), or do they proactively walk to the western border of their zone and patrol up and down waiting for a handoff (True)?
-* **What it proves:** Shows how anticipating the needs of the supply chain (moving to where the waste *will* be) optimizes the flow of resources between zones.
+![Experience 3](batch_results/exp_memory/plot_time_to_clear_vs_use_memory.png)
 
-![Experience 3  ](batch_results/exp_patrol/plot_time_to_clear_vs_patrol_border.png)
+As in the communication experiment, enabling memory improves outcomes, with an even larger effect size.
 
-Contrary to initial expectations, implementing proactive border patrolling behavior yields a negative impact on the system's overall efficiency.
+- Strong Reduction in Average Time: without memory (`False`), red agents must rediscover the disposal area repeatedly, and average completion time rises above 700 steps. With memory (`True`), the average drops near 200 steps.
+- Large Consistency Gain: variance is also much lower with memory enabled, indicating more predictable end-to-end behavior.
 
-* Slight Increase in Average Time: When border patrol is disabled (False), the agents manage to clear the environment in an average of approximately 210 steps. Activating the border patrol (True) counterintuitively increases this average clearing time to nearly 240 steps.
+### 4) Border Patrol
 
-* Dramatic Increase in Variance: The most significant finding from this experiment is the drastic increase in the standard deviation. While the baseline system without border patrol exhibits relatively consistent performance, enabling the patrol introduces substantial unpredictability into the runs, stretching the upper error bar well past 300 steps.
+- **Run config:** `--patrol-border True,False`
+- **Question:** does proactive border waiting improve handoffs?
+- **Interpretation:** In this setting, `patrol_border` does not appear to have a strong effect on performance.
 
-This surprising result suggests that forcing Yellow and Red agents to proactively wait at their western borders might actually lead to unforeseen inefficiencies. It is highly likely that this behavior causes pathfinding congestion at the borders, or prevents agents from opportunistically discovering and transporting wastes scattered deeper within their respective zones.
+![Experience 4](batch_results/exp_patrol/plot_time_to_clear_vs_patrol_border.png)
 
-**4. Initial Waste Distribution (System Bootstrapping)**
-* **Configuration:** `--multiple-wastes True` vs. `--multiple-wastes False`
-* **Purpose:** Tests two different starting states. `False` forces the system to start from scratch (all Green wastes in Z1). `True` pre-scatters a mathematically safe mix of Green, Yellow, and Red wastes across all three zones at step 0.
-* **What it proves:** Evaluates how the MAS handles "cold starts" (where Yellow and Red robots sit idle initially) versus "hot starts" (where all robots have immediate work).
+- Enabling it slightly reduces the mean time to clear all waste, but the difference remains small compared with the variability across runs, and the error bars largely overlap. This suggests that border patrolling may provide at most a modest benefit here, rather than a clear improvement. A possible explanation is that, under this configuration, the agents already coordinate reasonably well through communication and memory, so the additional exploration structure brought by border patrolling has only a limited impact.
 
-![Experience 4](batch_results/exp_multiple_wastes/plot_time_to_clear_vs_multiple_wastes.png)
+### 5) Initial Waste Distribution
 
-As anticipated, increasing the diversity of the initial waste distribution (`multiple_wastes = True`) significantly increases both the average time to clear the environment and the variance across simulation runs. 
+- **Run config:** `--multiple-wastes True,False`
+- **Question:** does starting with mixed waste types alter pipeline dynamics?
+- **Interpretation:** mixed starts are often harder and can increase time and spread in this setup.
 
-* Increase in Average Time: Starting the simulation with a homogeneous set of wastes (`False`) yields a lower average clearing time of roughly 190 steps. Conversely, pre-distributing multiple waste types (Green, Yellow, and Red) from the beginning (`True`) raises the average completion time to nearly 300 steps.
-* Increase in Variance: Furthermore, the error bars illustrate a marked increase in performance variance when multiple waste types are initially present. The uniform starting condition (`False`) leads to highly consistent run times, whereas the mixed initialization (`True`) results in broader unpredictability.
+![Experience 5](batch_results/exp_multiple_wastes/plot_time_to_clear_vs_multiple_wastes.png)
 
-This outcome aligns with expectations, as a scattered and diverse initial state forces all agent types to coordinate and resolve complex pathfinding or deadlock scenarios simultaneously right from the start, rather than following a predictable, phased supply chain flow.
+As expected, enabling mixed initial waste types (`multiple_wastes=True`) increases both average completion time and variability.
 
-**5. Quantitative Scaling (Robots, Vision & Waste Count)**
-* **Configuration:** Varies `n-waste` (16, 32, 48), `n-green-robots` (2, 4, 6), `n-yellow-robots` (1, 2, 4), `n-red-robots` (1, 2), and `vision` (1, 2, 3) simultaneously.
-* **Purpose:** A massive combinatorial test to see how the system scales.
-* **What it proves:** Generates the line charts. It helps identify the "sweet spot" of efficiency—proving that adding more robots makes the system faster, but only up to a certain point before diminishing returns hit.
+- Increase in Average Time: homogeneous initialization (`False`) is faster on average (around 230 steps), while mixed initialization (`True`) is slower (around 330 steps).
+- Increase in Variance: mixed starts also produce wider error bars, showing less consistent trajectories.
 
-![Experience 5 Green](batch_results/exp_scaling/plot_time_to_clear_vs_green_agents.png)
-![Experience 5 Yellow](batch_results/exp_scaling/plot_time_to_clear_vs_yellow_agents.png)
-![Experience 5 Red](batch_results/exp_scaling/plot_time_to_clear_vs_red_agents.png)
-![Experience 5 Vision](batch_results/exp_scaling/plot_time_to_clear_vs_vision.png)
-![Experience 5 Waste](batch_results/exp_scaling/plot_time_to_clear_vs_waste.png)
+This is consistent with a harder cold-start pipeline, where all agent types must coordinate immediately in a more complex initial state.
 
-Impact of Agent Population
-* Green Agents: Increasing the number of green robots from 2 to 6 shows a steady decrease in mean clearing time, dropping from over 200 steps to approximately 120 steps. However, the rate of improvement slows as the population grows, suggesting diminishing returns once the initial stage of the supply chain is saturated.
+### 6) Quantitative Scaling 
 
-* Yellow Agents: The system exhibits a non-linear response to yellow agent population. While increasing from 1 to 2 agents significantly reduces clearing time, further increasing the count to 4 actually results in a performance regression and a much wider variance (95% CI). This likely indicates physical congestion or pathfinding conflicts in the intermediate zone.
+- **Run config (from `run_batch.sh`):**
+- `--design ofat`
+- `--n-waste 4,16,24,32,40,48,56`
+- `--n-green-robots 1,2,3,4,6,7,8`
+- `--n-yellow-robots 1,2,3,4,5`
+- `--n-red-robots 1,2,3,4,5`
+- `--vision 1,2,3,4,5`
 
-* Red Agents (Highest Sensitivity): Red agents are identified as the most critical bottleneck. Doubling the red agent count from 1 to 2 results in a dramatic and consistent reduction in mean clearing time, nearly halving the duration required for the final disposal phase.
+This is a one-factor-at-a-time design around a shared anchor chosen from middle values (for this range: waste 32, green 4, yellow 3, red 3, vision 3).
 
-Sensory and Workload Scaling
-* Vision Radius: Enhancing the agents' visual field is highly effective. Increasing the vision radius from 1 to 3 results in a sharp, consistent downward trend in clearing time, as agents spend less time wandering randomly and can navigate directly toward identified wastes.
+![Experience 6 Green](batch_results/exp_scaling/plot_time_to_clear_vs_green_agents.png)
+![Experience 6 Yellow](batch_results/exp_scaling/plot_time_to_clear_vs_yellow_agents.png)
+![Experience 6 Red](batch_results/exp_scaling/plot_time_to_clear_vs_red_agents.png)
+![Experience 6 Vision](batch_results/exp_scaling/plot_time_to_clear_vs_vision.png)
+![Experience 6 Waste](batch_results/exp_scaling/plot_time_to_clear_vs_waste.png)
 
-* Workload Scalability: The system demonstrates excellent stability under varying workloads. The mean time to clear all waste increases in a strictly linear manner as the number of initial waste units scales from 16 to 48. This linear growth proves that the MAS architecture avoids exponential bottlenecks, making it a reliable solution for larger-scale hazardous cleanup operations.
 
-**6. Vision as a Communication Fallback**
-* **Configuration:** `--vision 1,3,5` with `--use-communication False` locked in.
-* **Purpose:** If the radioactive environment completely jams the wireless network, can we compensate by giving the robots better optical sensors?
-* **What it proves:** Tests if a high vision radius (allowing robots to visually spot deadlocks or dropped wastes from afar) can achieve the same `time_to_clear` as the wireless network.
+Interpretation of the scaling curves
 
-![Experience 6](batch_results/exp_vision_no_comm/plot_time_to_clear_vs_vision.png)
+- Green scaling: The number of robots is beneficial only up to an intermediate point. In the first graph, adding green robots strongly improves performance from 1 to about 4 robots, with a sharp decrease in the mean time-to-clear. Beyond that point, the gain disappears and performance slightly degrades, which suggests diminishing returns and possibly congestion or redundancy between agents. In other words, once enough green robots are available, the bottleneck likely shifts to another part of the task.
 
-As expected, expanding the sensory capabilities of the agents by increasing their vision radius significantly reduces both the mean time to clear the environment and the variance across simulation runs. 
+- Yellow scaling: the same pattern appears for yellow robots, with the best performance around 3 robots. Adding more yellow robots beyond this point increases the mean time-to-clear, which indicates that simply increasing team size does not necessarily improve coordination. An excess of robots of one type may create interference, while the limiting factor becomes the number of robots of the other roles or the structure of the environment.
 
-* Decreased Average Time: In this scenario, communication is explicitly disabled (`comm=False`), forcing agents to rely entirely on their visual sensors. With a limited vision radius of 1, agents struggle to locate wastes or the disposal zone, resulting in a high average clearing time of over 400 steps. As the vision radius expands to 3, the mean time drops sharply to roughly 230 steps. At a vision radius of 5, the mean time dips below 200 steps.
-* Reduced Variance: The shaded 95% Confidence Interval (CI) visibly narrows as the vision radius increases. At a radius of 1, the performance is highly erratic and unpredictable, spanning a wide range of possible completion times. By radius 5, the runs become extremely consistent, displaying a very tight confidence interval.
+- Red scaling: Same for the red ones. The plot suggests a non-monotonic effect. Increasing the number of red robots improves performance from 1 to about 3 robots, as shown by the decrease in mean time-to-clear. However, adding more red robots beyond this point does not provide further benefit and may even slightly worsen performance. 
 
-This experiment perfectly validates the "Cognitive Smart Pathfinding" strategy. It proves that allowing agents to "look ahead" over a wider radius serves as a powerful, autonomous fallback mechanism capable of achieving high efficiency even when wireless network communication is jammed or unavailable.
+- Vision scaling: Increasing the vision radius produces a clear improvement from 1 to about 3. Beyond that point, performance stabilizes and even slightly degrades for larger values, indicating that wider perception is useful only up to a certain threshold. A plausible explanation is that once robots can already detect relevant targets efficiently, further increasing vision does not significantly improve decision-making and may instead increase redundancy or coordination overhead.
 
-**7. Extreme Crowding & Deadlock Stress Test**
-* **Configuration:** High robot counts (`n-green` 10-15, `n-yellow` 8-12) paired with very low waste (`n-waste` 16).
-* **Purpose:** Creates a scenario of severe resource starvation. With 15 green robots fighting over 16 wastes, deadlocks are mathematically guaranteed to happen constantly.
-* **What it proves:** Acts as a stress test for the ID-based Yielding protocol. It proves that the negotiation logic is robust enough to untangle massive traffic jams without breaking.
+- Waste scaling: as expected, higher initial waste increases mean time-to-clear.  For small to intermediate values, the time-to-clear remains relatively stable, which suggests that the system (with fixed params) can absorb a moderate increase in workload without a major loss in efficiency. However, beyond roughly 32–40 waste units, the curve rises more clearly, indicating that the system is reaching its capacity limits. In this regime, additional waste creates a heavier processing burden and the robots can no longer maintain the same level of efficiency.
 
-![Experience 7 Green](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_green_agents.png)
-![Experience 7 Yellow](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_yellow_agents.png)
+### 7) Vision as Communication Fallback
 
-The stress tests conducted under high-density conditions reveal a critical disparity in how scaling specific agent types affects the total "time-to-clear".
+- **Run config:** `--vision 1,2,3,4,5 --use-communication False`
+- **Question:** how much can perception compensate when **messaging is disabled**?
+- **Interpretation:** higher vision is associated with faster completion in this scenario.
 
-* Green Robot Scaling (Initial Phase Saturation): Increasing the number of green agents from 10 to 15 has a negligible impact on the mean clearing time, which remains relatively flat at approximately 400 steps. This occurs because green agents handle the initial stage of the supply chain; their work is completed early and can happen in parallel with the downstream tasks of other agents. Adding more green robots beyond a certain point likely leads to zone congestion without providing additional throughput for the final stages.
+![Experience 7](batch_results/exp_vision_no_comm/plot_time_to_clear_vs_vision.png)
 
-* Yellow Robot Scaling (Intermediate Bottleneck): Conversely, the number of yellow agents is a primary driver of efficiency. Increasing yellow agents from 8 to 12 results in a dramatic reduction in mean clearing time, dropping from roughly 800 steps to under 400 steps. Additionally, the variance (95% CI) narrows significantly as the yellow agent count increases.
+As expected, increasing visual range significantly improves performance when communication is disabled.
 
-* Sequential Dependency: This sensitivity exists because yellow agents represent a central bottleneck in the transformation chain. They cannot begin their primary task until green agents have provided sufficient input, and their output is required for red agents to finalize the cleanup. Increasing the throughput of this intermediate stage directly accelerates the entire sequential process.
+- Decreased Average Time: with `comm=False`, agents rely entirely on perception; moving from vision `1` to higher values reduces mean completion time strongly.
+- Reduced Variance: the 95% CI narrows as vision increases, indicating more stable outcomes.
 
-**8. The "Lone Wolf" Baseline**
-* **Configuration:** Exactly 1 Green, 1 Yellow, and 1 Red robot, scaling the waste from 16 to 64.
-* **Purpose:** Removes all peer-to-peer interactions (since there are no peers of the same color to deadlock with or talk to).
-* **What it proves:** Establishes the absolute baseline efficiency of the supply chain mechanics. Every other experiment can be compared against this to isolate feature improvements.
+This supports the idea that stronger local perception can partially compensate for missing wireless coordination.
 
-![Experience 8](batch_results/exp_lone_wolf/plot_time_to_clear_vs_waste.png)
+### 8) Extreme Crowding Stress Test
 
-As expected, increasing the total number of initial waste units leads to a proportional increase in the mean time required to clear the environment. 
+- **Run config:** `--n-green-robots 10,15 --n-yellow-robots 8,12 --n-waste 16`
+- **Question:** behavior under high contention and low resources.
+- **Interpretation:** These results suggest a possible asymmetric effect of crowding across robot types.
 
-* Linear Scaling: The most crucial takeaway from this chart is the linear nature of the performance degradation. When the simulation starts with approximately 16 waste units, the baseline pipeline (exactly one robot of each type) clears the grid in roughly 250 steps. Doubling the workload to 32 waste units scales the mean time to about 400 steps, and quadrupling it to 64 units raises the time to roughly 700 steps.
-* System Stability: Because the time-to-clear grows at a steady, linear rate rather than exponentially, it proves that the system is highly stable and manageable for the agents. Even under a heavy workload with no peers to assist them (`green=1, red=1, yellow=1`), the individual robots do not suffer from cascading bottlenecks or pathfinding breakdowns. 
+![Experience 8 Green](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_green_agents.png)
+![Experience 8 Yellow](batch_results/exp_extreme_crowding/plot_time_to_clear_vs_yellow_agents.png)
 
-This linear predictability confirms that the foundational MAS architecture is structurally sound before introducing multi-agent crowding dynamics.
+Under this highly constrained setting, increasing the number of green robots appears to worsen performance, whereas increasing the number of yellow robots seems to slightly reduce the time-to-clear. A plausible explanation is that, with only one red robot, the system becomes bottlenecked at the final processing stage: adding more upstream green robots may increase congestion and overload the downstream pipeline, while additional yellow robots may help smooth intermediate transport. However, the confidence intervals are very large and only two values were tested for each variable, so this result should be interpreted as a tentative trend rather than strong evidence.
+
+### 9) Lone-Wolf Baseline
+
+- **Run config:** `--n-green-robots 1 --n-yellow-robots 1 --n-red-robots 1 --n-waste 16,32,64`
+- **Question:** baseline throughput without same-color peer interactions.
+- **Interpretation:** useful reference curve for comparing multi-robot configurations.
+
+![Experience 9](batch_results/exp_lone_wolf/plot_time_to_clear_vs_waste.png)
+
+As expected, increasing initial waste raises mean time-to-clear in the lone-wolf configuration.
+
+- Near-Linear Trend: from `16 -> 64` waste units, completion time rises in a broadly linear fashion.
+- Baseline Robustness: this run family provides a useful reference curve for comparing multi-robot speedups and crowding effects.

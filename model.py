@@ -32,11 +32,12 @@ class RobotMissionModel(Model):
         n_yellow_robots: int = 2,
         n_red_robots: int = 1,
         vision: int = 1,
+        green_coordination: bool = True,
+        log_communications: bool = False,
         use_memory: bool = True,
         patrol_border: bool = False,
         use_communication: bool = True,
         multiple_wastes: bool = False,
-        log_messages: bool = True,
         rng: Optional[Union[int, np.random.Generator]] = None,
         seed: Optional[int] = None,
     ) -> None:
@@ -47,6 +48,8 @@ class RobotMissionModel(Model):
         super().__init__(rng=rng)
         self.width = width
         self.height = height
+        self.green_coordination = bool(green_coordination)
+        self.log_communications = bool(log_communications)
         self.grid: MultiGrid = MultiGrid(width, height, torus=False)
         self.running = True
 
@@ -55,7 +58,6 @@ class RobotMissionModel(Model):
         self.patrol_border = patrol_border
         self.use_communication = use_communication
         self.multiple_wastes = multiple_wastes
-        self.log_messages = log_messages
 
         self.radioactivity_agents: List[Radioactivity] = []
         self.waste_agents: List[Waste] = []
@@ -68,6 +70,7 @@ class RobotMissionModel(Model):
         self.cumulative_moves_yellow: int = 0
         self.cumulative_moves_red: int = 0
         self.time_to_clear = None
+        self.communication_events: List[str] = []
 
         self._init_radioactivity_field()
         self._init_waste_disposal_zone()
@@ -98,6 +101,42 @@ class RobotMissionModel(Model):
                 "time_to_clear": "time_to_clear",
             }
         )
+
+    def _format_comm_payload(self, payload: Any) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+        compact: Dict[str, Any] = {}
+        for key, value in payload.items():
+            if isinstance(value, list) and len(value) > 8:
+                compact[key] = f"list(len={len(value)})"
+            else:
+                compact[key] = value
+        return compact
+
+    def log_communication_event(
+        self,
+        sender: RobotAgent,
+        message: Dict[str, Any],
+        recipients: List[RobotAgent],
+    ) -> None:
+        if not bool(getattr(self, "log_communications", False)):
+            return
+
+        sender_label = f"{getattr(sender, 'type', sender.__class__.__name__)}#{getattr(sender, 'unique_id', '?')}"
+        recipient_labels = [
+            f"{getattr(r, 'type', r.__class__.__name__)}#{getattr(r, 'unique_id', '?')}"
+            for r in recipients
+        ]
+        topic = message.get("topic", "unknown")
+        data = self._format_comm_payload(message.get("data"))
+        line = (
+            f"[COMM t={int(getattr(self, 'time', 0))}] "
+            f"{sender_label} -> {recipient_labels} | topic={topic} | data={data}"
+        )
+        self.communication_events.append(line)
+        if len(self.communication_events) > 500:
+            self.communication_events = self.communication_events[-500:]
+        print(line, flush=True)
 
     def _waste_counts_total(self) -> Dict[str, int]:
         counts = {"green": 0, "yellow": 0, "red": 0}
@@ -219,10 +258,10 @@ class RobotMissionModel(Model):
         robot = robot_cls(
             model=self,
             vision=self.vision,
+            green_coordination=self.green_coordination,
             use_memory=self.use_memory,
             patrol_border=self.patrol_border,
             use_communication=self.use_communication,
-            log_messages=self.log_messages,
         )
         pos = self._random_position_in_zones(
             robot.allowed_zones, avoid_robot_occupied=True
@@ -248,6 +287,17 @@ class RobotMissionModel(Model):
         return (0, 0)
 
     def step(self) -> None:
+        # Keep per-agent toggles in sync so UI parameter changes can apply live.
+        communication_enabled = bool(getattr(self, "use_communication", True))
+        green_coordination_enabled = (
+            bool(getattr(self, "green_coordination", False)) and communication_enabled
+        )
+        for robot in self.robot_agents:
+            knowledge = getattr(robot, "knowledge", None)
+            if isinstance(knowledge, dict):
+                knowledge["use_communication"] = communication_enabled
+                knowledge["green_coordination"] = green_coordination_enabled
+
         robots = list(self.robot_agents)
         self.random.shuffle(robots)
         for robot in robots:
