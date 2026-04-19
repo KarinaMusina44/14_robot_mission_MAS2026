@@ -381,35 +381,6 @@ def post_process(ax):
             bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "black"},
             zorder=10,
         )
-        green_coord = bool(getattr(_current_model, "green_coordination", False))
-        log_comm = bool(getattr(_current_model, "log_communications", False))
-        ax.text(
-            0.01,
-            0.93,
-            f"green_coordination={'ON' if green_coord else 'OFF'}",
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=9,
-            fontweight="bold",
-            color="#1B4332" if green_coord else "#6C757D",
-            bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "black"},
-            zorder=10,
-        )
-        ax.text(
-            0.01,
-            0.87,
-            f"log_communications={'ON' if log_comm else 'OFF'}",
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=9,
-            fontweight="bold",
-            color="#0B5394" if log_comm else "#6C757D",
-            bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "black"},
-            zorder=10,
-        )
-
         if _is_mission_complete(_current_model):
             _draw_fireworks(ax, _current_model)
             pulse = 0.5 + 0.5 * math.sin(
