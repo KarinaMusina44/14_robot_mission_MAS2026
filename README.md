@@ -51,6 +51,7 @@ python run.py --steps 100 --n-waste 30 --verbose
 
 `run.py` is intended for one simulation run and basic diagnostics. It currently exposes options such as:
 
+- It also includes boolean toggles to quickly enable/disable behaviors from CLI.
 - Grid and counts: `--steps`, `--width`, `--height`, `--n-robots`, `--n-green-robots`, `--n-yellow-robots`, `--n-red-robots`, `--n-waste`, `--n-green-wastes`
 - Coordination/logging: `--green-coordination` / `--no-green-coordination`, `--log-communications` / `--no-log-communications`
 - Utility: `--seed`, `--verbose`, `--report-every`, `--check-only`, `--debug-traceback`, `--model-class`
